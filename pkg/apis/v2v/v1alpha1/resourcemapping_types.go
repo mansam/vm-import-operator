@@ -16,6 +16,7 @@ type ResourceMappingSpec struct {
 
 	// +optional
 	OvirtMappings *OvirtMappings `json:"ovirt,omitempty"`
+	VmwareMappings *VmwareMappings `json:"vmware,omitempty"`
 }
 
 // OvirtMappings defines the mappings of ovirt resources to kubevirt
@@ -37,6 +38,16 @@ type OvirtMappings struct {
 	// DiskMappings.Source.ID represents the disk ID on ovirt (as opposed to disk-attachment ID)
 	// DiskMappings.Source.Name represents the disk alias on ovirt
 	// DiskMappings is respected only when provided in context of a single VM import within VirtualMachineImport
+	// +optional
+	DiskMappings *[]ResourceMappingItem `json:"diskMappings,omitempty"`
+}
+
+// VmwareMappings defines the mappings of vmware resources to kubevirt
+// +k8s:openapi-gen=true
+type VmwareMappings struct {
+	// +optional
+	NetworkMappings *[]ResourceMappingItem `json:"networkMappings,omitempty"`
+
 	// +optional
 	DiskMappings *[]ResourceMappingItem `json:"diskMappings,omitempty"`
 }
