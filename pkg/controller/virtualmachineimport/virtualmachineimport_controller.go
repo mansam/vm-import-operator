@@ -18,6 +18,7 @@ import (
 	"github.com/kubevirt/vm-import-operator/pkg/ownerreferences"
 	provider "github.com/kubevirt/vm-import-operator/pkg/providers"
 	ovirtprovider "github.com/kubevirt/vm-import-operator/pkg/providers/ovirt"
+	vmwareprovider "github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
 	"github.com/kubevirt/vm-import-operator/pkg/utils"
 	templatev1 "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -732,8 +733,12 @@ func (r *ReconcileVirtualMachineImport) createProvider(vmi *v2vv1alpha1.VirtualM
 		provider := ovirtprovider.NewOvirtProvider(vmi.ObjectMeta, vmi.TypeMeta, r.client, r.ocClient, r.factory, r.kvConfigProvider)
 		return &provider, nil
 	}
+	if vmi.Spec.Source.Vmware != nil {
+		provider := vmwareprovider.NewVmwareProvider(vmi.ObjectMeta, vmi.TypeMeta, r.client, r.ocClient, r.factory, r.kvConfigProvider)
+		return &provider, nil
+	}
 
-	return nil, fmt.Errorf("Invalid source type. only Ovirt type is supported")
+	return nil, fmt.Errorf("Invalid source type.")
 }
 
 func (r *ReconcileVirtualMachineImport) updateToRunning(vmName types.NamespacedName) error {
