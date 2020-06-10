@@ -48,7 +48,7 @@ func getWorkload(vm *ovirtsdk.Vm) string {
 	return strings.Replace(string(vmType), "_", "", -1)
 }
 
-func (f *TemplateFinder) getTemplate(os string, workload string) (*templatev1.Template, error) {
+func (f *TemplateFinder)  getTemplate(os string, workload string) (*templatev1.Template, error) {
 	// We update metadata from the source vm so we default to medium flavor
 	namespace := TemplateNamespace
 	flavor := defaultFlavor

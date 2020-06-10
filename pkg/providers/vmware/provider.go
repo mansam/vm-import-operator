@@ -47,11 +47,11 @@ func (r *VmwareProvider) ProcessTemplate(template *oapiv1.Template, s *string, s
 
 func (r *VmwareProvider) getClient() (pclient.VMClient, error) {
 	if r.vmwareClient == nil {
-		client, err := r.factory.NewVmwareClient(r.vmwareSecretDataMap)
+		c, err := r.factory.NewVmwareClient(r.vmwareSecretDataMap)
 		if err != nil {
 			return nil, err
 		}
-		r.vmwareClient = client
+		r.vmwareClient = c
 	}
 	return r.vmwareClient, nil
 }
@@ -128,5 +128,9 @@ func (r *VmwareProvider) CleanUp(bool) error {
 }
 
 func (r *VmwareProvider) FindTemplate() (*oapiv1.Template, error) {
-	return nil, nil
+	vm, err := r.getVM()
+	if err != nil {
+		return nil, err
+	}
+	return o.templateFinder.FindTemplate(vm)
 }
