@@ -6,11 +6,11 @@ import (
 	"github.com/kubevirt/vm-import-operator/pkg/utils"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
-	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubevirtv1 "kubevirt.io/client-go/api/v1"
+	cdiv1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
 	"strconv"
 	"strings"
 )
@@ -24,33 +24,33 @@ const (
 	)
 
 var BiosTypeMapping = map[string]*kubevirtv1.Bootloader {
-	"efi":  &kubevirtv1.Bootloader{EFI: &kubevirtv1.EFI{}},
-	"bios": &kubevirtv1.Bootloader{BIOS: &kubevirtv1.BIOS{}},
+	"efi":  {EFI:  &kubevirtv1.EFI{}},
+	"bios": {BIOS: &kubevirtv1.BIOS{}},
 }
 
 type VmwareMapper struct {
 	vm *object.VirtualMachine
-	vmId string
 	vmProperties *mo.VirtualMachine
 	hostProperties *mo.HostSystem
 	namespace string
 	mappings *v2vv1alpha1.VmwareMappings
 }
 
-func (r *VmwareMapper) getVmProperties() (*mo.VirtualMachine, error) {
-	if r.vmProperties == nil {
-		vmProperties := mo.VirtualMachine{}
-		err := r.vm.Properties(context.TODO(), types.ManagedObjectReference{
-			Type:  "VirtualMachine",
-			Value: r.vmId,
-		}, nil, vmProperties)
-		if err != nil {
-			return nil, err
-		}
-		r.vmProperties = &vmProperties
-	}
+func (r *VmwareMapper) MapDataVolumes(targetVMName *string) (map[string]cdiv1.DataVolume, error) {
+	panic("implement me")
+}
 
-	return r.vmProperties, nil
+func (r *VmwareMapper) MapDisks(vmSpec *kubevirtv1.VirtualMachine, dvs map[string]cdiv1.DataVolume) {
+	panic("implement me")
+}
+
+func NewVmwareMapper(vm *object.VirtualMachine, vmProperties *mo.VirtualMachine, mappings *v2vv1alpha1.VmwareMappings, namespace string) *VmwareMapper {
+	return &VmwareMapper{
+		vm: vm,
+		vmProperties: vmProperties,
+		mappings: mappings,
+		namespace: namespace,
+	}
 }
 
 func (r *VmwareMapper) getHostProperties() (*mo.HostSystem, error) {
@@ -118,40 +118,36 @@ func (r *VmwareMapper) MapVM(targetVmName *string, vmSpec *kubevirtv1.VirtualMac
 	} else {
 		vmSpec.ObjectMeta.Name = *targetVmName
 	}
-	vmProperties, err := r.getVmProperties()
-	if err != nil {
-		return nil, err
-	}
 	hostProperties, err := r.getHostProperties()
 	if err != nil {
 		return nil, err
 	}
 	// Map hostname
-	vmSpec.Spec.Template.Spec.Hostname = vmProperties.Guest.HostName
-	vmSpec.Spec.Template.Spec.Domain.CPU = r.mapCPUTopology(vmProperties)
-	vmSpec.Spec.Template.Spec.Domain.Firmware = r.mapFirmware(vmProperties)
-	reservations, err := r.mapResourceReservations(vmProperties)
+	vmSpec.Spec.Template.Spec.Hostname = r.vmProperties.Guest.HostName
+	vmSpec.Spec.Template.Spec.Domain.CPU = r.mapCPUTopology()
+	vmSpec.Spec.Template.Spec.Domain.Firmware = r.mapFirmware()
+	reservations, err := r.mapResourceReservations()
 	if err != nil {
 		return nil, err
 	}
 	vmSpec.Spec.Template.Spec.Domain.Resources = reservations
 	// Map labels like vm tags
-	vmSpec.ObjectMeta.Labels = r.mapLabels(vmSpec.ObjectMeta.Labels, vmProperties)
+	vmSpec.ObjectMeta.Labels = r.mapLabels(vmSpec.ObjectMeta.Labels)
 	// Map annotations
-	vmSpec.ObjectMeta.Annotations = r.mapAnnotations(vmProperties)
+	vmSpec.ObjectMeta.Annotations = r.mapAnnotations()
 
 	// Map clock
 	vmSpec.Spec.Template.Spec.Domain.Clock = r.mapClock(hostProperties)
 
 	// Map networks
-	vmSpec.Spec.Template.Spec.Networks = r.mapNetworks(vmProperties)
+	vmSpec.Spec.Template.Spec.Networks = r.mapNetworks()
 	networkToType := r.mapNetworksToTypes(vmSpec.Spec.Template.Spec.Networks)
-	vmSpec.Spec.Template.Spec.Domain.Devices.Interfaces = r.mapNetworkInterfaces(vmProperties, networkToType)
-	
+	vmSpec.Spec.Template.Spec.Domain.Devices.Interfaces = r.mapNetworkInterfaces(networkToType)
+
 	return vmSpec, nil
 }
 
-func (r *VmwareMapper) mapLabels(vmLabels map[string]string, vmProperties *mo.VirtualMachine) map[string]string {
+func (r *VmwareMapper) mapLabels(vmLabels map[string]string) map[string]string {
 	var labels map[string]string
 	if vmLabels == nil {
 		labels = map[string]string{}
@@ -160,23 +156,23 @@ func (r *VmwareMapper) mapLabels(vmLabels map[string]string, vmProperties *mo.Vi
 	}
 
 	var tagList []string
-	for _, tag := range vmProperties.Tag {
+	for _, tag := range r.vmProperties.Tag {
 		tagList = append(tagList, tag.Key)
 	}
 	labels[LabelTag] = strings.Join(tagList, ",")
 	return labels
 }
 
-func (r *VmwareMapper) mapAnnotations(vmProperties *mo.VirtualMachine) map[string]string {
+func (r *VmwareMapper) mapAnnotations() map[string]string {
 	annotations := map[string]string{}
-	annotations[VmwareDescription] = vmProperties.Config.Annotation
+	annotations[VmwareDescription] = r.vmProperties.Config.Annotation
 	return annotations
 }
 
-func (r *VmwareMapper) mapNetworkInterfaces(vmProperties *mo.VirtualMachine, networkToType map[string]string) []kubevirtv1.Interface {
+func (r *VmwareMapper) mapNetworkInterfaces(networkToType map[string]string) []kubevirtv1.Interface {
 	var interfaces []kubevirtv1.Interface
 
-	for _, guestInterface := range vmProperties.Guest.Net {
+	for _, guestInterface := range r.vmProperties.Guest.Net {
 		kubevirtInterface := kubevirtv1.Interface{}
 		kubevirtInterface.MacAddress = guestInterface.MacAddress
 		switch networkToType[guestInterface.Network] {
@@ -191,9 +187,9 @@ func (r *VmwareMapper) mapNetworkInterfaces(vmProperties *mo.VirtualMachine, net
 	return interfaces
 }
 
-func (r *VmwareMapper) mapNetworks(vmProperties *mo.VirtualMachine) []kubevirtv1.Network {
+func (r *VmwareMapper) mapNetworks() []kubevirtv1.Network {
 	var kubevirtNetworks []kubevirtv1.Network
-	for _, network := range vmProperties.Network {
+	for _, network := range r.vmProperties.Network {
 		kubevirtNet := kubevirtv1.Network{}
 
 		for _, mapping := range *r.mappings.NetworkMappings {
@@ -226,17 +222,17 @@ func (r *VmwareMapper) mapNetworksToTypes(networks []kubevirtv1.Network) map[str
 	return networkToType
 }
 
-func (r *VmwareMapper) mapFirmware(vmProperties *mo.VirtualMachine) *kubevirtv1.Firmware {
+func (r *VmwareMapper) mapFirmware() *kubevirtv1.Firmware {
 	firmwareSpec := &kubevirtv1.Firmware{}
-	firmwareSpec.Bootloader = BiosTypeMapping[vmProperties.Config.Firmware]
-	firmwareSpec.Serial = vmProperties.Config.InstanceUuid
+	firmwareSpec.Bootloader = BiosTypeMapping[r.vmProperties.Config.Firmware]
+	firmwareSpec.Serial = r.vmProperties.Config.InstanceUuid
 	return firmwareSpec
 }
 
-func (r *VmwareMapper) mapResourceReservations(vmProperties *mo.VirtualMachine) (kubevirtv1.ResourceRequirements, error) {
+func (r *VmwareMapper) mapResourceReservations() (kubevirtv1.ResourceRequirements, error) {
 	reqs := kubevirtv1.ResourceRequirements{}
 
-	reservation := *vmProperties.ResourceConfig.MemoryAllocation.Reservation
+	reservation := *r.vmProperties.ResourceConfig.MemoryAllocation.Reservation
 	resString := strconv.FormatInt(reservation, 10) + "Mi"
 	resQuantity, err := resource.ParseQuantity(resString)
 	if err != nil {
@@ -246,7 +242,7 @@ func (r *VmwareMapper) mapResourceReservations(vmProperties *mo.VirtualMachine) 
 		corev1.ResourceMemory: resQuantity,
 	}
 
-	limit := *vmProperties.ResourceConfig.MemoryAllocation.Limit
+	limit := *r.vmProperties.ResourceConfig.MemoryAllocation.Limit
 	limitString := strconv.FormatInt(limit, 10) + "Mi"
 	limitQuantity, err := resource.ParseQuantity(limitString)
 	if err != nil {
@@ -259,10 +255,10 @@ func (r *VmwareMapper) mapResourceReservations(vmProperties *mo.VirtualMachine) 
 	return reqs, nil
 }
 
-func (r *VmwareMapper) mapCPUTopology(vmProperties *mo.VirtualMachine) *kubevirtv1.CPU {
+func (r *VmwareMapper) mapCPUTopology() *kubevirtv1.CPU {
 	cpu := &kubevirtv1.CPU{}
-	cpu.Sockets = uint32(vmProperties.Config.Hardware.NumCPU)
-	cpu.Cores = uint32(vmProperties.Config.Hardware.NumCoresPerSocket)
+	cpu.Sockets = uint32(r.vmProperties.Config.Hardware.NumCPU)
+	cpu.Cores = uint32(r.vmProperties.Config.Hardware.NumCoresPerSocket)
 	return cpu
 }
 
