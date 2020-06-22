@@ -1,12 +1,11 @@
 package client
 
 import (
-	"github.com/kubevirt/vm-import-operator/pkg/client"
-	"github.com/vmware/govmomi"
-	"github.com/vmware/govmomi/find"
-	"github.com/vmware/govmomi/object"
-	"net/url"
 	"context"
+	"github.com/vmware/govmomi"
+	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/vim25/types"
+	"net/url"
 )
 
 // RichOvirtClient is responsible for retrieving VM data from oVirt API
@@ -15,10 +14,13 @@ type richVmwareClient struct {
 }
 
 // NewRichVMwareClient creates new, connected rich vmware client. After it is no longer needed, call Close().
-func NewRichVMWareClient(apiUrl string, insecure bool) (client.VMClient, error) {
+func NewRichVMWareClient(apiUrl, username, password string, insecure bool) (*richVmwareClient, error) {
 	u, err := url.Parse(apiUrl)
 	if err != nil {
 		return nil, err
+	}
+	if u.User == nil {
+		u.User = url.UserPassword(username, password)
 	}
 	govmomiClient, err := govmomi.NewClient(context.TODO(), u, insecure)
 	if err != nil {
@@ -35,10 +37,8 @@ func (r richVmwareClient) GetVM(id *string, _ *string, _ *string, _ *string) (in
 }
 
 func (r richVmwareClient) getVM(id string) (*object.VirtualMachine, error) {
-	vm, err := find.NewFinder(r.client.Client).VirtualMachine(context.Background(), id)
-	if err != nil {
-		return nil, err
-	}
+	vmRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: id}
+	vm := object.NewVirtualMachine(r.client.Client, vmRef)
 	return vm, nil
 }
 
@@ -67,5 +67,6 @@ func (r richVmwareClient) StartVM(id string) error {
 }
 
 func (r richVmwareClient) Close() error {
+	// nothing to do
 	return nil
 }

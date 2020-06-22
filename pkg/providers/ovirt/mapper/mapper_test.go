@@ -343,7 +343,6 @@ var _ = Describe("Test mapping disks", func() {
 		Expect(dvs).To(HaveLen(1))
 		Expect(dvs[expectedDVName].Spec.PVC.StorageClassName).To(BeNil())
 	})
-
 })
 
 func createVM() *ovirtsdk.Vm {

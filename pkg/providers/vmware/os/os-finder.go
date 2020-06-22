@@ -2,9 +2,9 @@ package os
 
 import (
 	"fmt"
+	"github.com/kubevirt/vm-import-operator/pkg/os"
 	"github.com/vmware/govmomi/vim25/mo"
 	"strings"
-	"github.com/kubevirt/vm-import-operator/pkg/os"
 )
 
 const (
@@ -12,32 +12,33 @@ const (
 	defaultWindows = "windows"
 )
 
-//// OSFinder defines operation of discovering OS name of a VM
-//type OSFinder interface {
-//	// FindOperatingSystem tries to find operating system name of the given oVirt VM
-//	FindOperatingSystem(*mo.VirtualMachine) (string, error)
-//}
-//
-//// VmwareOSFinder provides Vmware VM OS information
+
+// OSFinder defines operation of discovering OS name of a VM
+type OSFinder interface {
+	// FindOperatingSystem tries to find operating system name of the given oVirt VM
+	FindOperatingSystem(vm *mo.VirtualMachine) (string, error)
+}
+
+// VmwareOSFinder provides Vmware VM OS information
 type VmwareOSFinder struct {
 	OsMapProvider os.OSMapProvider
 }
 
 // FindOperatingSystem tries to find the guest operating system name of the given Vmware VM
-func (o *VmwareOSFinder) FindOperatingSystem(vm *mo.VirtualMachine) (string, error) {
-	guestOsToCommon, osInfoToCommon, err := o.OsMapProvider.GetOSMaps()
+func (r VmwareOSFinder) FindOperatingSystem(vm *mo.VirtualMachine) (string, error) {
+	guestOsToCommon, osInfoToCommon, err := r.OsMapProvider.GetOSMaps()
 	if err != nil {
 		return "", err
 	}
 
-	os, found := guestOsToCommon[vm.Summary.Guest.GuestFullName]
+	oS, found := guestOsToCommon[vm.Summary.Guest.GuestFullName]
 	if found {
-		return os, nil
+		return oS, nil
 	}
 
-	os, found = osInfoToCommon[vm.Summary.Guest.GuestId]
+	oS, found = osInfoToCommon[vm.Summary.Guest.GuestId]
 	if found {
-		return os, nil
+		return oS, nil
 	}
 
 	osType := strings.ToLower(vm.Summary.Guest.GuestId)
@@ -48,5 +49,5 @@ func (o *VmwareOSFinder) FindOperatingSystem(vm *mo.VirtualMachine) (string, err
 	}
 
 	// return empty to fail label selector
-	return "", fmt.Errorf("Failed to find operating system for the VM.")
+	return "", fmt.Errorf("failed to find operating system for the VM")
 }

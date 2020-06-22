@@ -17,11 +17,11 @@ const (
 // TemplateFinder attempts to find a template based on given parameters
 type TemplateFinder struct {
 	templateProvider templates.TemplateProvider
-	osFinder         os.VmwareOSFinder
+	osFinder         os.OSFinder
 }
 
 // NewTemplateFinder creates new TemplateFinder
-func NewTemplateFinder(templateProvider templates.TemplateProvider, osFinder os.VmwareOSFinder) *TemplateFinder {
+func NewTemplateFinder(templateProvider templates.TemplateProvider, osFinder os.OSFinder) *TemplateFinder {
 	return &TemplateFinder{
 		templateProvider: templateProvider,
 		osFinder:         osFinder,
@@ -34,22 +34,18 @@ func (f *TemplateFinder) FindTemplate(vm *mo.VirtualMachine) (*templatev1.Templa
 	if err != nil {
 		return nil, err
 	}
-	return f.getTemplate(os)
-}
-
-func (f *TemplateFinder)  getTemplate(os string) (*templatev1.Template, error) {
 	// We update metadata from the source vm so we default to medium flavor
 	namespace := TemplateNamespace
 	flavor := defaultFlavor
-	templates, err := f.templateProvider.Find(&namespace, &os, nil, &flavor)
+	tmpls, err := f.templateProvider.Find(&namespace, &os, nil, &flavor)
 	if err != nil {
 		return nil, err
 	}
-	if len(templates.Items) == 0 {
-		return nil, fmt.Errorf("Template not found for %s OS.", os)
+	if len(tmpls.Items) == 0 {
+		return nil, fmt.Errorf("template not found for %s OS", os)
 	}
 	// Take first which matches label selector
-	return &templates.Items[0], nil
+	return &tmpls.Items[0], nil
 }
 
 // GetMetadata fetches OS and workload specific labels and annotations

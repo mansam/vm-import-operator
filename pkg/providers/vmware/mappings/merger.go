@@ -29,7 +29,7 @@ func extractMappings(externalMappingSpec *v2vv1alpha1.ResourceMappingSpec, crMap
 		primaryMappings = *crMappings
 	}
 
-	if externalMappingSpec != nil && externalMappingSpec.OvirtMappings != nil {
+	if externalMappingSpec != nil && externalMappingSpec.VmwareMappings != nil {
 		secondaryMappings = *externalMappingSpec.VmwareMappings
 	}
 	return &primaryMappings, &secondaryMappings

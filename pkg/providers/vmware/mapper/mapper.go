@@ -2,10 +2,12 @@ package mapper
 
 import (
 	"context"
+	"fmt"
 	v2vv1alpha1 "github.com/kubevirt/vm-import-operator/pkg/apis/v2v/v1alpha1"
 	"github.com/kubevirt/vm-import-operator/pkg/utils"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
+	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +23,13 @@ const (
 	networkTypeMultus = "multus"
 	VmwareDescription = "vmware-description"
 	LabelTag          = "tags"
-	)
+	// DefaultStorageClassTargetName define the storage target name value that forces using default storage class
+	DefaultStorageClassTargetName = ""
+	cdiAPIVersion = "cdi.kubevirt.io/v1alpha1"
+	dataVolumeKind = "DataVolume"
+	busTypeSata = "sata"
+	busTypeSCSI = "scsi"
+)
 
 var BiosTypeMapping = map[string]*kubevirtv1.Bootloader {
 	"efi":  {EFI:  &kubevirtv1.EFI{}},
@@ -34,14 +42,187 @@ type VmwareMapper struct {
 	hostProperties *mo.HostSystem
 	namespace string
 	mappings *v2vv1alpha1.VmwareMappings
+	disks *[]Disk
+	disksByDVName map[string]Disk
+}
+
+type Disk struct {
+	id string
+	name string
+	bus string
+	capacity resource.Quantity
+}
+
+func (r *VmwareMapper) buildDisks() error {
+	if r.disks != nil {
+		return nil
+	}
+
+	disks := make([]Disk, 0)
+	devices, err := r.vm.Device(context.TODO())
+	if err != nil {
+		return err
+	}
+	for _, device := range devices {
+		if virtualDisk, ok := device.(*types.VirtualDisk); ok {
+			var capacityInBytes int64
+			if virtualDisk.CapacityInBytes > 0 {
+				capacityInBytes = virtualDisk.CapacityInBytes
+			} else {
+				capacityInBytes = virtualDisk.CapacityInKB * 1024
+			}
+
+			diskSizeConverted, err := utils.FormatBytes(capacityInBytes)
+			if err != nil {
+				return err
+			}
+			capacity, err := resource.ParseQuantity(diskSizeConverted)
+			if err != nil {
+				return err
+			}
+
+			var bus string
+			controller := devices.FindByKey(virtualDisk.GetVirtualDevice().ControllerKey)
+			if controller == nil {
+				bus = busTypeSata
+			} else {
+				switch controller.(type) {
+				case types.BaseVirtualSCSIController:
+					bus = busTypeSCSI
+					break
+				case types.BaseVirtualSATAController:
+					bus = busTypeSata
+				default:
+					bus = busTypeSata
+				}
+			}
+			var id string
+			if virtualDisk.VDiskId != nil && virtualDisk.VDiskId.Id != "" {
+				id = virtualDisk.VDiskId.Id
+			} else if virtualDisk.DiskObjectId != "" {
+				id = virtualDisk.DiskObjectId
+			} else {
+				id = virtualDisk.DeviceInfo.GetDescription().Label
+			}
+			disk := Disk{
+				id: id,
+				name: virtualDisk.DeviceInfo.GetDescription().Label,
+				capacity: capacity,
+				bus: bus,
+			}
+
+			disks = append(disks, disk)
+		}
+	}
+	r.disks = &disks
+	return nil
+}
+
+func buildDataVolumeName(targetVMName string, diskAttachID string) string {
+	dvName, _ := utils.NormalizeName(targetVMName + "-" + diskAttachID)
+	return dvName
+}
+
+func (r *VmwareMapper) getStorageClassForDisk(disk *Disk) *string {
+	if r.mappings.DiskMappings != nil {
+		for _, mapping := range *r.mappings.DiskMappings {
+			targetName := mapping.Target.Name
+			if mapping.Source.ID != nil {
+				if disk.id == *mapping.Source.ID {
+					if targetName != DefaultStorageClassTargetName {
+						return &targetName
+					}
+				}
+			}
+			if mapping.Source.Name != nil {
+				if disk.name == *mapping.Source.Name {
+					if targetName != DefaultStorageClassTargetName {
+						return &targetName
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (r *VmwareMapper) MapDataVolumes(targetVMName *string) (map[string]cdiv1.DataVolume, error) {
-	panic("implement me")
+	err := r.buildDisks()
+	if err != nil {
+		return nil, err
+	}
+
+	dvs := make(map[string]cdiv1.DataVolume)
+
+	for _, disk := range *r.disks {
+		dvName := buildDataVolumeName(*targetVMName, disk.id)
+
+		dvs[dvName] = cdiv1.DataVolume{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: cdiAPIVersion,
+				Kind:       dataVolumeKind,
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      dvName,
+				Namespace: r.namespace,
+			},
+			Spec: cdiv1.DataVolumeSpec{
+				Source: cdiv1.DataVolumeSource{
+					// TODO: figure out CDI vmware source
+				},
+				PVC: &corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{
+						corev1.ReadWriteOnce,
+					},
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: disk.capacity,
+						},
+					},
+				},
+			},
+		}
+		sdClass := r.getStorageClassForDisk(&disk)
+		if sdClass != nil {
+			dvs[dvName].Spec.PVC.StorageClassName = sdClass
+		}
+		r.disksByDVName[dvName] = disk
+	}
+	return dvs, nil
 }
 
 func (r *VmwareMapper) MapDisks(vmSpec *kubevirtv1.VirtualMachine, dvs map[string]cdiv1.DataVolume) {
-	panic("implement me")
+	volumes := make([]kubevirtv1.Volume, len(dvs))
+	i := 0
+	for _, dv := range dvs {
+		volumes[i] = kubevirtv1.Volume{
+			Name: fmt.Sprintf("dv-#{i}"),
+			VolumeSource: kubevirtv1.VolumeSource{
+				DataVolume: &kubevirtv1.DataVolumeSource{
+					Name: dv.Name,
+				},
+			},
+		}
+		i++
+	}
+
+	i = 0
+	disks := make([]kubevirtv1.Disk, len(dvs))
+	for dvName := range dvs {
+		disk := r.disksByDVName[dvName]
+		disks[i] = kubevirtv1.Disk{
+			Name: fmt.Sprintf("dv-%v", i),
+			DiskDevice: kubevirtv1.DiskDevice{
+				Disk: &kubevirtv1.DiskTarget{
+					Bus: disk.bus,
+				},
+			},
+		}
+		i++
+	}
+
+	vmSpec.Spec.Template.Spec.Volumes = volumes
+	vmSpec.Spec.Template.Spec.Domain.Devices.Disks = disks
 }
 
 func NewVmwareMapper(vm *object.VirtualMachine, vmProperties *mo.VirtualMachine, mappings *v2vv1alpha1.VmwareMappings, namespace string) *VmwareMapper {
@@ -50,12 +231,13 @@ func NewVmwareMapper(vm *object.VirtualMachine, vmProperties *mo.VirtualMachine,
 		vmProperties: vmProperties,
 		mappings: mappings,
 		namespace: namespace,
+		disksByDVName: make(map[string]Disk),
 	}
 }
 
 func (r *VmwareMapper) getHostProperties() (*mo.HostSystem, error) {
 	if r.hostProperties == nil {
-		hostProperties := mo.HostSystem{}
+		hostProperties := &mo.HostSystem{}
 
 		hostSystem, err := r.vm.HostSystem(context.TODO())
 		if err != nil {
@@ -65,7 +247,7 @@ func (r *VmwareMapper) getHostProperties() (*mo.HostSystem, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.hostProperties = &hostProperties
+		r.hostProperties = hostProperties
 	}
 
 	return r.hostProperties, nil
@@ -109,6 +291,9 @@ func (r *VmwareMapper) CreateEmptyVM(vmName *string) *kubevirtv1.VirtualMachine 
 }
 
 func (r *VmwareMapper) MapVM(targetVmName *string, vmSpec *kubevirtv1.VirtualMachine) (*kubevirtv1.VirtualMachine, error) {
+	if vmSpec.Spec.Template == nil {
+		vmSpec.Spec.Template = &kubevirtv1.VirtualMachineInstanceTemplateSpec{}
+	}
 	// Set Namespace
 	vmSpec.ObjectMeta.Namespace = r.namespace
 
@@ -175,6 +360,7 @@ func (r *VmwareMapper) mapNetworkInterfaces(networkToType map[string]string) []k
 	for _, guestInterface := range r.vmProperties.Guest.Net {
 		kubevirtInterface := kubevirtv1.Interface{}
 		kubevirtInterface.MacAddress = guestInterface.MacAddress
+		kubevirtInterface.Name = guestInterface.Network
 		switch networkToType[guestInterface.Network] {
 		case networkTypeMultus:
 			kubevirtInterface.Bridge = &kubevirtv1.InterfaceBridge{}
@@ -189,11 +375,11 @@ func (r *VmwareMapper) mapNetworkInterfaces(networkToType map[string]string) []k
 
 func (r *VmwareMapper) mapNetworks() []kubevirtv1.Network {
 	var kubevirtNetworks []kubevirtv1.Network
-	for _, network := range r.vmProperties.Network {
+	for _, iface := range r.vmProperties.Guest.Net {
 		kubevirtNet := kubevirtv1.Network{}
 
 		for _, mapping := range *r.mappings.NetworkMappings {
-			if mapping.Source.Name != nil && network.Value == *mapping.Source.Name {
+			if mapping.Source.Name != nil && iface.Network == *mapping.Source.Name {
 				if *mapping.Type == networkTypePod {
 					kubevirtNet.Pod = &kubevirtv1.PodNetwork{}
 				} else if *mapping.Type == networkTypeMultus {
@@ -203,7 +389,7 @@ func (r *VmwareMapper) mapNetworks() []kubevirtv1.Network {
 				}
 			}
 		}
-		kubevirtNet.Name, _ = utils.NormalizeName(network.Value)
+		kubevirtNet.Name, _ = utils.NormalizeName(iface.Network)
 		kubevirtNetworks = append(kubevirtNetworks, kubevirtNet)
 	}
 
@@ -231,6 +417,8 @@ func (r *VmwareMapper) mapFirmware() *kubevirtv1.Firmware {
 
 func (r *VmwareMapper) mapResourceReservations() (kubevirtv1.ResourceRequirements, error) {
 	reqs := kubevirtv1.ResourceRequirements{}
+	if r.vmProperties.ResourceConfig == nil {return reqs, nil
+	}
 
 	reservation := *r.vmProperties.ResourceConfig.MemoryAllocation.Reservation
 	resString := strconv.FormatInt(reservation, 10) + "Mi"

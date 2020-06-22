@@ -2,6 +2,7 @@ package vmware
 
 import (
 	"context"
+	"fmt"
 	v2vv1alpha1 "github.com/kubevirt/vm-import-operator/pkg/apis/v2v/v1alpha1"
 	pclient "github.com/kubevirt/vm-import-operator/pkg/client"
 	"github.com/kubevirt/vm-import-operator/pkg/config"
@@ -13,6 +14,8 @@ import (
 	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware/mappings"
 	vos "github.com/kubevirt/vm-import-operator/pkg/providers/vmware/os"
 	vtemplates "github.com/kubevirt/vm-import-operator/pkg/providers/vmware/templates"
+	"github.com/kubevirt/vm-import-operator/pkg/utils"
+
 	//"github.com/kubevirt/vm-import-operator/pkg/providers/vmware/validation"
 	//"github.com/kubevirt/vm-import-operator/pkg/providers/vmware/validation/validators"
 	"github.com/kubevirt/vm-import-operator/pkg/secrets"
@@ -28,6 +31,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "kubevirt.io/client-go/api/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+
 )
 
 const (
@@ -35,27 +40,58 @@ const (
 )
 
 type VmwareProvider struct {
-	vmiObjectMeta         metav1.ObjectMeta
-	vmiTypeMeta           metav1.TypeMeta
 	vmwareClient          pclient.VMClient
 	factory               pclient.Factory
 	vmwareSecretDataMap   map[string]string
-	instance              *v2vv1alpha1.VirtualMachineImport
 	templateHandler       *templates.TemplateHandler
 	secretsManager        provider.SecretsManager
 	configMapsManager     provider.ConfigMapsManager
 	datavolumesManager    provider.DataVolumesManager
 	virtualMachineManager provider.VirtualMachineManager
-	//validator             validation.VirtualMachineImportValidator
-	vm                    *object.VirtualMachine
 	resourceMapping       *v2vv1alpha1.VmwareMappings
 	templateFinder        *vtemplates.TemplateFinder
 	osFinder              *vos.VmwareOSFinder
+
+	vm                    *object.VirtualMachine
 	vmProperties          *mo.VirtualMachine
+
+	vmiObjectMeta         metav1.ObjectMeta
+	vmiTypeMeta           metav1.TypeMeta
+	instance              *v2vv1alpha1.VirtualMachineImport
+
 }
 
-func (r *VmwareProvider) ProcessTemplate(template *oapiv1.Template, s *string, s2 string) (*v1.VirtualMachine, error) {
-	panic("implement me")
+func (r *VmwareProvider) ProcessTemplate(template *oapiv1.Template, vmName *string, namespace string) (*v1.VirtualMachine, error) {
+	vm, err := r.templateHandler.ProcessTemplate(template, vmName, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceVmProperties, err := r.getVmProperties()
+	if err != nil {
+		return nil, err
+	}
+	labels, annotations, err := r.templateFinder.GetMetadata(template, sourceVmProperties)
+	if err != nil {
+		return nil, err
+	}
+	updateLabels(vm, labels)
+	updateAnnotations(vm, annotations)
+	return vm, nil
+}
+
+func updateLabels(vm *v1.VirtualMachine, labels map[string]string) {
+	utils.AppendMap(vm.ObjectMeta.GetLabels(), labels)
+	utils.AppendMap(vm.Spec.Template.ObjectMeta.GetLabels(), labels)
+}
+
+func updateAnnotations(vm *v1.VirtualMachine, annotationMap map[string]string) {
+	annotations := vm.ObjectMeta.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+		vm.ObjectMeta.SetAnnotations(annotations)
+	}
+	utils.AppendMap(annotations, annotationMap)
 }
 
 func (r *VmwareProvider) getClient() (pclient.VMClient, error) {
@@ -70,8 +106,7 @@ func (r *VmwareProvider) getClient() (pclient.VMClient, error) {
 }
 
 func NewVmwareProvider(vmiObjectMeta metav1.ObjectMeta, vmiTypeMeta metav1.TypeMeta, client client.Client, tempClient *tempclient.TemplateV1Client, factory pclient.Factory,
-	kvConfigProvider config.KubeVirtConfigProvider) VmwareProvider {
-	//validator             := validators.NewValidatorWrapper(client, kvConfigProvider)
+	_ config.KubeVirtConfigProvider) VmwareProvider {
 	secretsManager        := secrets.NewManager(client)
 	configMapsManager     := configmaps.NewManager(client)
 	datavolumesManager    := datavolumes.NewManager(client)
@@ -87,7 +122,6 @@ func NewVmwareProvider(vmiObjectMeta metav1.ObjectMeta, vmiTypeMeta metav1.TypeM
 		datavolumesManager:    &datavolumesManager,
 		virtualMachineManager: &virtualMachineManager,
 		osFinder:              &osFinder,
-		//validator:             validator,
 		templateHandler:       templates.NewTemplateHandler(templateProvider),
 		templateFinder:        vtemplates.NewTemplateFinder(templateProvider, osFinder),
 
@@ -104,14 +138,17 @@ func (r *VmwareProvider) Init(secret *corev1.Secret, instance *v2vv1alpha1.Virtu
 	return nil
 }
 
-func (r *VmwareProvider) Close() {}
+
+func (r *VmwareProvider) Close() {
+	// nothing to do
+}
 
 func (r *VmwareProvider) LoadVM(sourceSpec v2vv1alpha1.VirtualMachineImportSourceSpec) error {
-	client, err := r.getClient()
+	vmClient, err := r.getClient()
 	if err != nil {
 		return err
 	}
-	vm, err := client.GetVM(sourceSpec.Vmware.VM.ID, nil, nil, nil)
+	vm, err := vmClient.GetVM(sourceSpec.Vmware.VM.ID, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -131,12 +168,16 @@ func (r *VmwareProvider) getVM() (*object.VirtualMachine, error) {
 
 func (r *VmwareProvider) getVmProperties() (*mo.VirtualMachine, error) {
 	if r.vmProperties == nil {
-		vmProperties := mo.VirtualMachine{}
-		err := r.vm.Properties(context.TODO(), r.vm.Reference(), nil, vmProperties)
+		vmProperties := &mo.VirtualMachine{}
+		vm, err := r.getVM()
 		if err != nil {
 			return nil, err
 		}
-		r.vmProperties = &vmProperties
+		err = vm.Properties(context.TODO(), vm.Reference(), nil, vmProperties)
+		if err != nil {
+			return nil, err
+		}
+		r.vmProperties = vmProperties
 	}
 	return r.vmProperties, nil
 }
@@ -146,6 +187,7 @@ func (r *VmwareProvider) PrepareResourceMapping(externalResourceMapping *v2vv1al
 }
 
 func (r *VmwareProvider) Validate() ([]v2vv1alpha1.VirtualMachineImportCondition, error) {
+	// TODO: implement vmware validation
 	return nil, nil
 }
 
@@ -204,8 +246,40 @@ func (r *VmwareProvider) StartVM() error {
 	return task.Wait(context.TODO())
 }
 
-func (r *VmwareProvider) CleanUp(bool) error {
+func (r *VmwareProvider) CleanUp(failure bool) error {
+	var errs []error
+	vmiName := r.GetVmiNamespacedName()
+	err := r.secretsManager.DeleteFor(vmiName)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	err = r.configMapsManager.DeleteFor(vmiName)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if failure {
+		err = r.datavolumesManager.DeleteFor(vmiName)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		err = r.virtualMachineManager.DeleteFor(vmiName)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return foldErrors(errs, vmiName)
+	}
 	return nil
+}
+
+// GetVmiNamespacedName return the namespaced name of the VM import object
+func (r *VmwareProvider) GetVmiNamespacedName() k8stypes.NamespacedName {
+	return k8stypes.NamespacedName{Name: r.vmiObjectMeta.Name, Namespace: r.vmiObjectMeta.Namespace}
 }
 
 func (r *VmwareProvider) FindTemplate() (*oapiv1.Template, error) {
@@ -214,4 +288,12 @@ func (r *VmwareProvider) FindTemplate() (*oapiv1.Template, error) {
 		return nil, err
 	}
 	return r.templateFinder.FindTemplate(vm)
+}
+
+func foldErrors(errs []error, vmiName k8stypes.NamespacedName) error {
+	message := ""
+	for _, e := range errs {
+		message = utils.WithMessage(message, e.Error())
+	}
+	return fmt.Errorf("clean-up for %v failed: %s", utils.ToLoggableResourceName(vmiName.Name, &vmiName.Namespace), message)
 }

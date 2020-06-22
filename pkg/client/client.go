@@ -44,5 +44,9 @@ func (f *SourceClientFactory) NewVmwareClient(dataMap map[string]string) (VMClie
 	if err != nil {
 		return nil, err
 	}
-	return vmwareclient.NewRichVMWareClient(dataMap["apiUrl"], insecure)
+	return vmwareclient.NewRichVMWareClient(
+		dataMap["apiUrl"],
+		dataMap["username"],
+		dataMap["password"],
+		insecure)
 }
