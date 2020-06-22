@@ -2,9 +2,7 @@
 
 ## Introduction
 
-VM Import operator is responsible for importing virtual machines that originated in an external virtual system into a kubevirt cluster. The current proposal refers to importing a single VM from [oVirt](https://www.ovirt.org/) to kubevirt. However it should remain open to support additional sources (e.g. vmware/OVA).
-
-A [repository](https://github.com/kubevirt/vm-import-operator) was created with a proposal for the vm-import resource and additional required resources to enable access to the source oVirt provider, a custom resource that specifies the mapping of oVirt resources to KubeVirt resources and the custom resource that defines the VM Import.
+VM Import Operator is responsible for importing virtual machines that originated in an external virtual system into a kubevirt cluster.
 
 Contact Information: Moti Asayag ([masayag@redhat.com](mailto:masayag@redhat.com))
 
@@ -88,11 +86,13 @@ Monitoring the progress of the vm import will be done by updating an annotation 
 
 ### Resource Mappings
 
-The mapping between ovirt to kubevirt resources is defined in ResourceMapping custom resource. The CR will contain sections for the mapping resources: network and storage. The example below demonstrates how multiple entities of each resource type can be declared and mapped.
+The mapping of resources from the external VM provider to kubevirt is defined in the ResourceMapping custom resource. The CR will contain sections for the mapping resources: network and storage. The example below demonstrates how multiple entities of each resource type can be declared and mapped.
 
-Each section specifies the mapping between ovirt entity to kubevirt’s entity, and allows to provide an additional piece of information, e.g. interface type if needed to complete the VM spec.
+Each section specifies the mapping from the external resources to kubevirt resources, and allows to provide an additional piece of information, e.g. interface type if needed to complete the VM spec.
 
-The import VM operator will be responsible to deduce the configuration of the target VM based on the configuration of the source and perform the transformation in a way that will preserve the attributes of the source VM, e.g. boot sequence, MAC address, [run strategy](https://kubevirt.io/user-guide/docs/latest/creating-virtual-machines/run-strategies.html), [domain specification](https://kubevirt.io/api-reference/v0.26.1/definitions.html#_v1_domainspec) and hostname if available on ovirt by the guest agent.
+The VM Import Operator will be responsible to deduce the configuration of the target VM based on the configuration of the source and perform the transformation in a way that will preserve the attributes of the source VM, e.g. boot sequence, MAC address, [run strategy](https://kubevirt.io/user-guide/docs/latest/creating-virtual-machines/run-strategies.html), [domain specification](https://kubevirt.io/api-reference/v0.26.1/definitions.html#_v1_domainspec) and hostname if available.
+
+#### oVirt Mappings
 
 “networkMappings“ section under “ovirt“ source describes the mapping of oVirt's vNIC Profile to network attachment definition:
 * name - should follow the format of 'network-name/vnic-profile-name'
@@ -125,7 +125,7 @@ Spec:
 ### Resource mapping resolution
 
 The resource mapping is resolved in following manner:
- - If the mapping is defined in one place (in the import CR or in the ResourceMapping CR), that mapping is used;
+ - If the mapping is defined in only one place (in the import CR or in the ResourceMapping CR), that mapping is used;
  - If the mapping of the same resource is defined in two places (in the import CR and in the ResourceMapping CR), the mapping from the import CR is used;
  - If the mapping of a disk is defined both through the `storageMappings` and `diskMappings`, the latter is used.  
  - If mappping for a disk is not defined in any way, the default storage class for the target cluster will be assumed. Default storage class can also be enforced by specifying empty string `""` target for either disk or storage mapping.
@@ -166,8 +166,9 @@ data:
 - guestos2common - maps the guest OS (as reported by the guest agent) to common template
 - osinfo2common - maps the operating system resource of source provider to common template
 
-### Provider Secret
+### Provider Secrets
 
+#### oVirt Secret Example
 The [example](https://github.com/kubevirt/vm-import-operator/blob/master/examples/ovirt-secret.yaml) of secret below defines oVirt connectivity and authentication method:
 
 ```yaml
@@ -191,10 +192,10 @@ stringData:
 
 ### Import Validations
 
-Due to the fact that oVirt provides a wider set of features that aren’t supported by kubevirt, the target VM might be created differently than the source VM configuration. That requires to warn the user or to block the import process.
+Due to the fact that external VM providers may provide a wider set of features than are supported by kubevirt, the target VM might be created differently than the source VM configuration. That requires to warn the user or to block the import process.
 
 The admission rules will be split into three categories: log, warn and block:
-* Log - a validation rule that cannot map ovirt behavior to kubevirt, however, it is harmless. In that case, that violation will be logged. E.g.. nic_boot set to false on source VM, a logical name set to a disk on the source, Rng_device other than urandom and more.
+* Log - a validation rule that cannot map VM provider behavior to kubevirt, however, it is harmless. In that case, that violation will be logged. E.g.. nic_boot set to false on source VM, a logical name set to a disk on the source, Rng_device other than urandom and more.
 * Warn - a validation rule that might introduce an issue. The violation will be recorded to the status of the CR, letting the user decide if the import should be cancelled. E.g., vm nic was unplugged on ovirt. In that case, the interface is not added to the target VM.
 * Block - a validation that fails the import action if violated. In this case, the import is failed. E.g., a missing mapping entry.
 

@@ -1,0 +1,18 @@
+apiVersion: v2v.kubevirt.io/v1alpha1
+kind: ResourceMapping
+metadata:
+  name: example-vmware-resourcemappings
+  namespace: example-ns
+spec:
+  ovirt:
+    networkMappings:
+      - source:
+          name: vmware-network-1  # maps of VM guest network interface to network attachment definition
+        target:
+          name: kubevirt-network-1
+        type: multus
+      - source:
+          name: vmware-network-2 # maps of VM guest network interface to pod's network
+        target:
+          name: pod
+        type: pod
