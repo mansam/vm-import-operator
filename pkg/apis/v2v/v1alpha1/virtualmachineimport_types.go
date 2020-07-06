@@ -33,6 +33,7 @@ type VirtualMachineImportSpec struct {
 type VirtualMachineImportSourceSpec struct {
 	// +optional
 	Ovirt *VirtualMachineImportOvirtSourceSpec `json:"ovirt,omitempty"`
+	Vmware *VirtualMachineImportVmwareSourceSpec `json:"vmware,omitempty"`
 }
 
 // VirtualMachineImportOvirtSourceSpec defines the mapping resources and the VM identity for oVirt source provider
@@ -42,6 +43,15 @@ type VirtualMachineImportOvirtSourceSpec struct {
 
 	// +optional
 	Mappings *OvirtMappings `json:"mappings,omitempty"`
+}
+
+// VirtualMachineImportVmwareSourceSpec defines the mapping resources and the VM identity for vmware source provider
+// +k8s:openapi-gen=true
+type VirtualMachineImportVmwareSourceSpec struct {
+	VM VirtualMachineImportVmwareSourceVMSpec `json:"vm"`
+
+	// +optional
+	Mappings *VmwareMappings `json:"mappings,omitempty"`
 }
 
 // ObjectIdentifier defines how a resource should be identified on kubevirt
@@ -65,6 +75,15 @@ type VirtualMachineImportOvirtSourceVMSpec struct {
 	// +optional
 	Cluster *VirtualMachineImportOvirtSourceVMClusterSpec `json:"cluster,omitempty"`
 }
+
+// VirtualMachineImportVmwareSourceVMSpec defines how to identify the VM in vCenter
+// +k8s:openapi-gen=true
+type VirtualMachineImportVmwareSourceVMSpec struct {
+	// vCenter moRef of virtual machine
+	// +optional
+	ID *string `json:"id,omitempty"`
+}
+
 
 // VirtualMachineImportOvirtSourceVMClusterSpec defines the source cluster's identity of the VM in oVirt
 // +k8s:openapi-gen=true
