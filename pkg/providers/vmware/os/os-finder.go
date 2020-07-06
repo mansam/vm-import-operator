@@ -26,25 +26,27 @@ type VmwareOSFinder struct {
 
 // FindOperatingSystem tries to find the guest operating system name of the given Vmware VM
 func (r VmwareOSFinder) FindOperatingSystem(vm *mo.VirtualMachine) (string, error) {
-	guestOsToCommon, osInfoToCommon, err := r.OsMapProvider.GetOSMaps()
+	_, osInfoToCommon, err := r.OsMapProvider.GetOSMaps()
 	if err != nil {
 		return "", err
 	}
 
-	oS, found := guestOsToCommon[vm.Summary.Guest.GuestFullName]
+	oS, found := osInfoToCommon[vm.Summary.Guest.GuestId]
 	if found {
 		return oS, nil
 	}
 
-	oS, found = osInfoToCommon[vm.Summary.Guest.GuestId]
+	oS, found = osInfoToCommon[vm.Summary.Config.GuestId]
 	if found {
 		return oS, nil
 	}
 
-	osType := strings.ToLower(vm.Summary.Guest.GuestId)
-	if strings.Contains(osType, "linux") || strings.Contains(osType, "rhel") {
+	// couldn't determine the exact OS from the GuestId, so at least try to determine
+	// whether this is linux or windows from the guestFullName
+	fullName := strings.ToLower(vm.Summary.Config.GuestFullName)
+	if strings.Contains(fullName, "linux") || strings.Contains(fullName, "rhel") {
 		return defaultLinux, nil
-	} else if strings.Contains(osType, "win") {
+	} else if strings.Contains(fullName, "win") {
 		return defaultWindows, nil
 	}
 
