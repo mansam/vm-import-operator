@@ -1712,6 +1712,10 @@ func (c *mockVmwareClient) Close() error {
 	return nil
 }
 
+func (c *mockVmwareClient) TestConnection() error {
+	return nil
+}
+
 func (c *mockKubeVirtConfigProvider) GetConfig() (config.KubeVirtConfig, error) {
 	return getConfig(), nil
 }
