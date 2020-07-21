@@ -1,0 +1,28 @@
+<ObjectContent>
+  <obj type="CustomizationSpecManager">CustomizationSpecManager</obj>
+  <propSet>
+    <name>encryptionKey</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="ArrayOfByte">
+      <byte>86</byte>
+    </val>
+  </propSet>
+  <propSet>
+    <name>info</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="ArrayOfCustomizationSpecInfo">
+      <CustomizationSpecInfo>
+        <name>pemcg-rhel7-template-master</name>
+        <description></description>
+        <type>Linux</type>
+        <changeVersion>1574773624</changeVersion>
+        <lastUpdateTime>2019-11-26T13:07:04Z</lastUpdateTime>
+      </CustomizationSpecInfo>
+      <CustomizationSpecInfo>
+        <name>pemcg-rhel8-template-master</name>
+        <description></description>
+        <type>Linux</type>
+        <changeVersion>1574773638</changeVersion>
+        <lastUpdateTime>2019-11-26T13:07:18Z</lastUpdateTime>
+      </CustomizationSpecInfo>
+    </val>
+  </propSet>
+</ObjectContent>

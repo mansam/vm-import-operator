@@ -1,0 +1,557 @@
+<ObjectContent>
+  <obj type="SessionManager">SessionManager</obj>
+  <propSet>
+    <name>currentSession</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="UserSession">
+      <key>52190623-a467-df6b-412e-8d3c9112a6ed</key>
+      <userName>VSPHERE.LOCAL\Administrator</userName>
+      <fullName>Administrator vsphere.local</fullName>
+      <loginTime>2020-07-08T20:25:07.817351Z</loginTime>
+      <lastActiveTime>2020-07-08T20:25:23.955153Z</lastActiveTime>
+      <locale>en_US</locale>
+      <messageLocale>en</messageLocale>
+      <extensionSession>false</extensionSession>
+      <ipAddress>10.10.118.171</ipAddress>
+      <userAgent>govc/0.23.0</userAgent>
+      <callCount>1</callCount>
+    </val>
+  </propSet>
+  <propSet>
+    <name>defaultLocale</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="xsd:string">en</val>
+  </propSet>
+  <propSet>
+    <name>message</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="xsd:string"></val>
+  </propSet>
+  <propSet>
+    <name>messageLocaleList</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="ArrayOfString">
+      <string>zh-CN</string>
+      <string>es</string>
+      <string>ja</string>
+      <string>zh_TW</string>
+      <string>zh-TW</string>
+      <string>en</string>
+      <string>ko</string>
+      <string>de</string>
+      <string>fr</string>
+      <string>zh_CN</string>
+    </val>
+  </propSet>
+  <propSet>
+    <name>sessionList</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="ArrayOfUserSession">
+      <UserSession>
+        <key>5216b42b-801c-4925-fa41-ae8c3d4e2056</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-22T13:42:09.525072Z</loginTime>
+        <lastActiveTime>2020-07-08T20:08:43.351732Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.80</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>8071</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52190623-a467-df6b-412e-8d3c9112a6ed</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-07-08T20:25:07.817351Z</loginTime>
+        <lastActiveTime>2020-07-08T20:25:07.817351Z</lastActiveTime>
+        <locale>en_US</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.10.118.171</ipAddress>
+        <userAgent>govc/0.23.0</userAgent>
+      </UserSession>
+      <UserSession>
+        <key>52259cc5-4ef3-4e73-1349-617718eb7018</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:26:44.503444Z</loginTime>
+        <lastActiveTime>2020-06-24T06:26:44.503444Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.69</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+      </UserSession>
+      <UserSession>
+        <key>5225dc6b-29d9-e2bd-ebc2-12733079dbb2</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:33:40.304862Z</loginTime>
+        <lastActiveTime>2020-07-08T20:03:06.10749Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.74</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>6835</callCount>
+      </UserSession>
+      <UserSession>
+        <key>5234a115-f69b-0757-449c-4e2c2232813c</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:58.484344Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:27.344549Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>407</callCount>
+      </UserSession>
+      <UserSession>
+        <key>523a48d2-a9cc-7657-b946-e9b6bfa6eba2</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-10T09:52:43.261428Z</loginTime>
+        <lastActiveTime>2020-06-19T15:52:44.173073Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>cl/1.0.0</userAgent>
+        <callCount>578</callCount>
+      </UserSession>
+      <UserSession>
+        <key>523f7932-3b1c-dde1-67c5-807cd89079b5</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:37.941245Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:25.895991Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>407</callCount>
+      </UserSession>
+      <UserSession>
+        <key>5261f913-ce9e-b224-5ed3-787fb891de1f</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:50:38.613762Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:27.373817Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>407</callCount>
+      </UserSession>
+      <UserSession>
+        <key>5265f2ac-ccd9-a462-26cc-58273cd146d0</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:58.528999Z</loginTime>
+        <lastActiveTime>2020-07-07T20:26:08.071548Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>406</callCount>
+      </UserSession>
+      <UserSession>
+        <key>526d8e31-db18-44d5-5196-287cb0e523c8</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:50:31.767112Z</loginTime>
+        <lastActiveTime>2020-07-08T20:24:40.041961Z</lastActiveTime>
+        <locale>en_US</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>712846</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52740846-78dc-fd98-4a64-a066ab49589d</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:50:18.553644Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:21.423665Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>406</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52a11b94-0a30-ae29-3868-c86cfc6b3834</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-17T12:21:18.926518Z</loginTime>
+        <lastActiveTime>2020-07-08T08:48:32.825576Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.215</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>56</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52a684b7-244e-85dd-2bbc-57edec537dff</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:37.887611Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:21.493255Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>407</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52aee033-b9b7-13a2-723d-879eb1961a5d</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:33:37.658224Z</loginTime>
+        <lastActiveTime>2020-06-24T06:33:37.658224Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.74</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+      </UserSession>
+      <UserSession>
+        <key>52c72252-22d3-0607-d071-fad4efe9b5c5</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:26:43.21331Z</loginTime>
+        <lastActiveTime>2020-06-24T06:26:44.183003Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.69</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>2</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52cde329-9e2d-3933-6b79-47a0008cea1e</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-30T15:42:16.71774Z</loginTime>
+        <lastActiveTime>2020-06-30T15:42:17.000049Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.215</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>2</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52ce1a07-59c4-d00f-7bf9-222c62d028ca</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:33:35.609511Z</loginTime>
+        <lastActiveTime>2020-06-24T06:33:36.44837Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.74</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>2</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52ced51d-1054-2c8d-f5dc-2d2649e69f5f</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:37.853055Z</loginTime>
+        <lastActiveTime>2020-07-07T20:26:08.100781Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>406</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52d99169-9dbc-5371-b63c-cd51ba71224c</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-22T13:42:05.299986Z</loginTime>
+        <lastActiveTime>2020-06-22T13:42:06.359202Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.80</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>2</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52f4dab7-2540-9067-0ff6-fee70fa124ab</key>
+        <userName>VSPHERE.LOCAL\vpxd-extension-3cf023db-88b1-48fd-aa97-32ad895fd93d</userName>
+        <fullName> </fullName>
+        <loginTime>2019-12-03T15:49:37.988661Z</loginTime>
+        <lastActiveTime>2020-07-07T20:35:25.914816Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>127.0.0.1</ipAddress>
+        <userAgent>VMware vim-java 1.0</userAgent>
+        <callCount>407</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52f886ce-edb2-d979-1ace-33ba0a22e097</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-22T13:42:06.898074Z</loginTime>
+        <lastActiveTime>2020-06-22T13:42:06.898074Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.80</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+      </UserSession>
+      <UserSession>
+        <key>52fd7dc4-7dd1-659c-2c0b-e0bb9c01c5f4</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-24T06:26:53.241103Z</loginTime>
+        <lastActiveTime>2020-07-08T06:26:55.934609Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.69</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+        <callCount>34</callCount>
+      </UserSession>
+      <UserSession>
+        <key>52ff192e-e90b-fe83-77ae-da90a5f7499c</key>
+        <userName>VSPHERE.LOCAL\Administrator</userName>
+        <fullName>Administrator vsphere.local</fullName>
+        <loginTime>2020-06-17T12:21:19.5506Z</loginTime>
+        <lastActiveTime>2020-06-17T12:21:19.5506Z</lastActiveTime>
+        <locale>en</locale>
+        <messageLocale>en</messageLocale>
+        <extensionSession>false</extensionSession>
+        <ipAddress>10.19.2.215</ipAddress>
+        <userAgent>HTTPClient/1.0 (2.8.3, ruby 2.5.5 (2019-03-15))</userAgent>
+      </UserSession>
+    </val>
+  </propSet>
+  <propSet>
+    <name>supportedLocaleList</name>
+    <val xmlns:XMLSchema-instance="http://www.w3.org/2001/XMLSchema-instance" XMLSchema-instance:type="ArrayOfString">
+      <string>tr_TR</string>
+      <string>th_TH</string>
+      <string>sw</string>
+      <string>sv</string>
+      <string>mr</string>
+      <string>sr</string>
+      <string>sq</string>
+      <string>sl</string>
+      <string>sv_FI</string>
+      <string>pt_PT</string>
+      <string>sq_AL</string>
+      <string>pt_BR</string>
+      <string>syr</string>
+      <string>ky</string>
+      <string>ur</string>
+      <string>gu</string>
+      <string>bn</string>
+      <string>he</string>
+      <string>he_IL</string>
+      <string>vi_VN</string>
+      <string>en_TT</string>
+      <string>zh-HK</string>
+      <string>kz</string>
+      <string>et_EE</string>
+      <string>gd</string>
+      <string>sk</string>
+      <string>sa</string>
+      <string>hy</string>
+      <string>es_CO</string>
+      <string>hi_IN</string>
+      <string>in</string>
+      <string>kn</string>
+      <string>ka_GE</string>
+      <string>ka</string>
+      <string>en_GB</string>
+      <string>th</string>
+      <string>es_ES</string>
+      <string>ar_YE</string>
+      <string>it</string>
+      <string>hr</string>
+      <string>ar_AE</string>
+      <string>en_ZW</string>
+      <string>ar_LY</string>
+      <string>no_NO</string>
+      <string>zh-SG</string>
+      <string>id</string>
+      <string>gl</string>
+      <string>en</string>
+      <string>ar_QA</string>
+      <string>mn</string>
+      <string>uk</string>
+      <string>ar_EG</string>
+      <string>en_CA</string>
+      <string>ar_IQ</string>
+      <string>de_AT</string>
+      <string>de</string>
+      <string>ml</string>
+      <string>es_UY</string>
+      <string>ts</string>
+      <string>en_IE</string>
+      <string>is_IS</string>
+      <string>bg</string>
+      <string>eu_ES</string>
+      <string>or</string>
+      <string>ar_SA</string>
+      <string>ms</string>
+      <string>en_BZ</string>
+      <string>ar_LB</string>
+      <string>zh_CN</string>
+      <string>uz_UZ</string>
+      <string>es_HN</string>
+      <string>es_PE</string>
+      <string>zh_SG</string>
+      <string>en_NZ</string>
+      <string>es_CR</string>
+      <string>ar_SY</string>
+      <string>da</string>
+      <string>ji</string>
+      <string>en_ZA</string>
+      <string>as</string>
+      <string>kk_KZ</string>
+      <string>sb</string>
+      <string>en_US</string>
+      <string>ru_RU</string>
+      <string>vi</string>
+      <string>az</string>
+      <string>bg_BG</string>
+      <string>es_BO</string>
+      <string>ur_PK</string>
+      <string>de_DE</string>
+      <string>de_CH</string>
+      <string>sx</string>
+      <string>az_AZ</string>
+      <string>zh-CN</string>
+      <string>en_AU</string>
+      <string>zh</string>
+      <string>kk</string>
+      <string>de_LU</string>
+      <string>te</string>
+      <string>da_DK</string>
+      <string>cs</string>
+      <string>hi</string>
+      <string>ar_TN</string>
+      <string>zh-MO</string>
+      <string>es_CL</string>
+      <string>zh_TW</string>
+      <string>ko</string>
+      <string>es_AR</string>
+      <string>zh_HK</string>
+      <string>ca_ES</string>
+      <string>be_BY</string>
+      <string>ar_MA</string>
+      <string>pa</string>
+      <string>ta</string>
+      <string>hy_am</string>
+      <string>mt</string>
+      <string>ne</string>
+      <string>zu</string>
+      <string>ar_OM</string>
+      <string>tn</string>
+      <string>xh</string>
+      <string>fi</string>
+      <string>af</string>
+      <string>be</string>
+      <string>is</string>
+      <string>es_GT</string>
+      <string>ar_BH</string>
+      <string>af_ZA</string>
+      <string>ro_RO</string>
+      <string>ar</string>
+      <string>ar_DZ</string>
+      <string>el</string>
+      <string>ar_JO</string>
+      <string>zh_MO</string>
+      <string>cs_CZ</string>
+      <string>sk_SK</string>
+      <string>es</string>
+      <string>lv_LV</string>
+      <string>es_DO</string>
+      <string>lb</string>
+      <string>es_EC</string>
+      <string>en_JM</string>
+      <string>ru</string>
+      <string>es_MX</string>
+      <string>sl_SI</string>
+      <string>es_NI</string>
+      <string>es_PA</string>
+      <string>en_PH</string>
+      <string>lv</string>
+      <string>mk_MK</string>
+      <string>iw_IL</string>
+      <string>es_PR</string>
+      <string>es_PY</string>
+      <string>hu_HU</string>
+      <string>nl_NL</string>
+      <string>es_SV</string>
+      <string>ca</string>
+      <string>es_VE</string>
+      <string>eu</string>
+      <string>tr</string>
+      <string>fa</string>
+      <string>nb_NO</string>
+      <string>tt</string>
+      <string>fi_FI</string>
+      <string>fo</string>
+      <string>en_CB</string>
+      <string>div</string>
+      <string>fo_FO</string>
+      <string>fr</string>
+      <string>tt_TA</string>
+      <string>fa_IR</string>
+      <string>fr_BE</string>
+      <string>fr_CA</string>
+      <string>fr_CH</string>
+      <string>el_GR</string>
+      <string>fr_LU</string>
+      <string>fr_MC</string>
+      <string>ar_KW</string>
+      <string>hr_HR</string>
+      <string>pl</string>
+      <string>fr_FR</string>
+      <string>hu</string>
+      <string>ko_KR</string>
+      <string>id_ID</string>
+      <string>iw</string>
+      <string>lt_LT</string>
+      <string>ja</string>
+      <string>ja_JP</string>
+      <string>ro</string>
+      <string>lb_LU</string>
+      <string>lt</string>
+      <string>et</string>
+      <string>mk</string>
+      <string>ms_BN</string>
+      <string>sv_SE</string>
+      <string>uk_UA</string>
+      <string>it_CH</string>
+      <string>ms_MY</string>
+      <string>nl</string>
+      <string>uz</string>
+      <string>nl_BE</string>
+      <string>no</string>
+      <string>sr_SP</string>
+      <string>nb</string>
+      <string>de_LI</string>
+      <string>it_IT</string>
+      <string>nn_NO</string>
+      <string>pl_PL</string>
+      <string>pt</string>
+      <string>sw_KE</string>
+      <string>zh-TW</string>
+    </val>
+  </propSet>
+</ObjectContent>
