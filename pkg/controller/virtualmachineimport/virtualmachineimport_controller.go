@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	liberrors "errors"
 	"fmt"
+	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
 	"os"
 	"strconv"
 	"strings"
@@ -804,6 +805,10 @@ func (r *ReconcileVirtualMachineImport) createProvider(vmi *v2vv1alpha1.VirtualM
 	// The type of the provider is evaluated based on the source field from the CR
 	if vmi.Spec.Source.Ovirt != nil {
 		provider := ovirtprovider.NewOvirtProvider(vmi.ObjectMeta, vmi.TypeMeta, r.client, r.ocClient, r.factory, r.kvConfigProvider)
+		return &provider, nil
+	}
+	if vmi.Spec.Source.Vmware != nil {
+		provider := vmware.NewVmwareProvider(vmi.ObjectMeta, vmi.TypeMeta, r.client, r.ocClient, r.factory, r.kvConfigProvider)
 		return &provider, nil
 	}
 
