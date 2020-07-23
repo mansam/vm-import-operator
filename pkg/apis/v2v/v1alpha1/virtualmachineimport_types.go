@@ -79,9 +79,12 @@ type VirtualMachineImportOvirtSourceVMSpec struct {
 // VirtualMachineImportVmwareSourceVMSpec defines how to identify the VM in vCenter
 // +k8s:openapi-gen=true
 type VirtualMachineImportVmwareSourceVMSpec struct {
-	// vCenter moRef of virtual machine
+	// vCenter UUID of virtual machine
 	// +optional
 	ID *string `json:"id,omitempty"`
+
+	// +optional
+	Name *string `json:"name,omitempty"`
 }
 
 

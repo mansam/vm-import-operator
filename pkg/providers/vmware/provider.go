@@ -58,7 +58,11 @@ type VmwareProvider struct {
 }
 
 func (r *VmwareProvider) TestConnection() error {
-	return r.vmwareClient.TestConnection()
+	vmwareClient, err := r.getClient()
+	if err != nil {
+		return err
+	}
+	return vmwareClient.TestConnection()
 }
 
 func (r *VmwareProvider) ValidateDiskStatus(s string) (bool, error) {
@@ -165,7 +169,7 @@ func (r *VmwareProvider) LoadVM(sourceSpec v2vv1alpha1.VirtualMachineImportSourc
 	if err != nil {
 		return err
 	}
-	vm, err := vmwareClient.GetVM(sourceSpec.Vmware.VM.ID, nil, nil, nil)
+	vm, err := vmwareClient.GetVM(sourceSpec.Vmware.VM.ID, sourceSpec.Vmware.VM.Name, nil, nil)
 	if err != nil {
 		return err
 	}

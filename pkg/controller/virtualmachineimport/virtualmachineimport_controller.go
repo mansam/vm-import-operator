@@ -6,6 +6,7 @@ import (
 	liberrors "errors"
 	"fmt"
 	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
+	batchv1 "k8s.io/api/batch/v1"
 	"os"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ import (
 	templatev1 "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,13 +44,16 @@ import (
 )
 
 const (
-	sourceVMInitialState = "vmimport.v2v.kubevirt.io/source-vm-initial-state"
+	AnnAPIGroup = "vmimport.v2v.kubevirt.io"
+	sourceVMInitialState = AnnAPIGroup + "/source-vm-initial-state"
 	// AnnCurrentProgress is annotations storing current progress of the vm import
-	AnnCurrentProgress = "vmimport.v2v.kubevirt.io/progress"
+	AnnCurrentProgress = AnnAPIGroup + "/progress"
 	// AnnPropagate is annotation defining which values to propagate
-	AnnPropagate = "vmimport.v2v.kubevirt.io/propagate-annotations"
+	AnnPropagate = AnnAPIGroup + "/propagate-annotations"
 	// TrackingLabel is a label used to track related entities.
-	TrackingLabel = "vmimport.v2v.kubevirt.io/tracker"
+	TrackingLabel = AnnAPIGroup + "/tracker"
+	// VirtV2VJobLabel is a label used to track virt-v2v jobs
+	VirtV2VJobLabel = AnnAPIGroup + "/virt-v2v"
 	// constants
 	progressStart         = "0"
 	progressCreatingVM    = "5"
@@ -195,7 +199,7 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 	instance := &v2vv1alpha1.VirtualMachineImport{}
 	err := r.client.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
 			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
 			// Return and don't requeue
@@ -278,13 +282,47 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 	}
 
 	// Import disks:
-	err = r.importDisks(provider, instance, mapper, vmName)
+	done, err := r.importDisks(provider, instance, mapper, vmName)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	if err = r.startVM(provider, instance, vmName); err != nil {
-		return reconcile.Result{}, err
+	if !done {
+		return reconcile.Result{}, nil
+	}
+
+	if instance.Spec.Source.Vmware != nil && !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1alpha1.VirtualMachineReady, v2vv1alpha1.VirtualMachineRunning) {
+		done, err = r.translateDisks(vmName)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		if !done {
+			return reconcile.Result{}, nil
+		}
+	}
+
+	if !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1alpha1.VirtualMachineReady, v2vv1alpha1.VirtualMachineRunning) {
+		if err := r.updateConditionsAfterSuccess(instance, "Virtual machine disks import done", v2vv1alpha1.VirtualMachineReady); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+
+	if shouldStartVM(instance) {
+		if err = r.startVM(provider, instance, vmName); err != nil {
+			return reconcile.Result{}, err
+		}
+	} else {
+		// Update progress if all disks import done:
+		if err := r.updateProgress(instance, progressDone); err != nil {
+			return reconcile.Result{}, err
+		}
+		if err := r.afterSuccess(vmName, provider, instance); err != nil {
+			return reconcile.Result{}, err
+		}
+
+		// Emit event vm is successfully imported
+		r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s import successful", vmName.Namespace, vmName.Name)
 	}
 
 	return reconcile.Result{}, nil
@@ -330,39 +368,71 @@ func (r *ReconcileVirtualMachineImport) addWatchForImportPod(instance *v2vv1alph
 	)
 }
 
-func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) error {
+
+func (r *ReconcileVirtualMachineImport) findV2VJob(vmName types.NamespacedName) (*batchv1.Job, error) {
+	jobList := &batchv1.JobList{}
+	matchingLabels := client.MatchingLabels(map[string]string{VirtV2VJobLabel: vmName.Name})
+	err := r.client.List(context.TODO(), jobList, matchingLabels)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobList.Items) > 0 {
+		return &jobList.Items[0], nil
+	}
+	return nil, nil
+}
+
+func (r *ReconcileVirtualMachineImport) translateDisks(vmName types.NamespacedName) (bool, error) {
+	job, err := r.findV2VJob(vmName)
+	if err != nil {
+		return false, err
+	}
+	// the job doesn't exist, so create it
+	// TODO: need to handle the case where the job doesn't exist because we're already done
+	if job == nil {
+		job = r.makeV2VJobSpec(vmName)
+		err := r.client.Create(context.TODO(), job)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	return job.Status.Succeeded == int32(1), nil
+}
+
+func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
 	dvs, err := mapper.MapDataVolumes(&vmName.Name)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	dvsDone := make(map[string]bool)
 	dvsImportProgress := make(map[string]float64)
 	for dvID, dv := range dvs {
 		if err = r.addWatchForImportPod(instance, dvID); err != nil {
-			return err
+			return false, err
 		}
 
 		foundDv := &cdiv1.DataVolume{}
 		err = r.client.Get(context.TODO(), types.NamespacedName{Namespace: instance.Namespace, Name: dvID}, foundDv)
-		if err != nil && errors.IsNotFound(err) {
+		if err != nil && k8serrors.IsNotFound(err) {
 			// We have to validate the disk status, so we are sure, the disk wasn't manipulated,
 			// before we execute the import:
 			valid, err := provider.ValidateDiskStatus(dv.Name)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if valid {
 				if err = r.createDataVolume(provider, mapper, instance, dv, vmName); err != nil {
 					if err = r.endImportAsFailed(provider, instance, foundDv, err.Error()); err != nil {
-						return err
+						return false, err
 					}
-					return err
+					return false, err
 				}
 			} else {
 				// If disk status is wrong, end the import as failed:
 				if err = r.endImportAsFailed(provider, instance, foundDv, "disk is in illegal status"); err != nil {
-					return err
+					return false, err
 				}
 			}
 		} else if err == nil {
@@ -371,7 +441,7 @@ func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, 
 				dvsDone[dvID] = true
 			} else if foundDv.Status.Phase == cdiv1.Failed {
 				if err = r.endImportAsFailed(provider, instance, foundDv, "dv is in Failed Phase"); err != nil {
-					return err
+					return false, err
 				}
 			} else if foundDv.Status.Phase == cdiv1.ImportInProgress {
 				// During ImportInProgress phase importer pod can be in crashloppbackoff, so we need
@@ -382,7 +452,7 @@ func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, 
 					for _, cs := range foundPod.Status.ContainerStatuses {
 						if cs.State.Waiting != nil && cs.State.Waiting.Reason == podCrashLoopBackOff && cs.RestartCount > int32(importPodRestartTolerance) {
 							if err = r.endImportAsFailed(provider, instance, foundDv, "pod CrashLoopBackoff restart exceeded"); err != nil {
-								return err
+								return false, err
 							}
 						}
 					}
@@ -397,39 +467,19 @@ func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, 
 				dvsImportProgress[dvID] = progressFloat
 			}
 		} else {
-			return err
+			return false, err
 		}
 	}
 
 	// Update progress:
 	currentProgress := disksImportProgress(dvsImportProgress, float64(len(dvs)))
 	if err := r.updateProgress(instance, currentProgress); err != nil {
-		return err
+		return false, err
 	}
 
 	// Update status if disk import is done:
-	allDone, err := r.manageDataVolumeState(instance, dvsDone, len(dvs))
-	if err != nil {
-		return err
-	}
-
-	// Update progress if all disks import done:
-	if allDone {
-		// Cleanup if user don't want to start the VM
-		if instance.Spec.StartVM == nil || !*instance.Spec.StartVM {
-			if err := r.updateProgress(instance, progressDone); err != nil {
-				return err
-			}
-			if err := r.afterSuccess(vmName, provider, instance); err != nil {
-				return err
-			}
-
-			// Emit event vm is successfully imported
-			r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s import successful", vmName.Namespace, vmName.Name)
-		}
-	}
-
-	return nil
+	done, err := r.isDoneImport(instance, dvsDone, len(dvs))
+	return done, err
 }
 
 func (r *ReconcileVirtualMachineImport) endImportAsFailed(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, dv *cdiv1.DataVolume, message string) error {
@@ -542,7 +592,7 @@ func (r *ReconcileVirtualMachineImport) createVM(provider provider.Provider, ins
 
 	// Create kubevirt VM from source VM:
 	reqLogger.Info("Creating a new VM", "VM.Namespace", vmSpec.Namespace, "VM.Name", vmSpec.Name)
-	if err = r.client.Create(context.TODO(), vmSpec); err != nil && !errors.IsAlreadyExists(err) {
+	if err = r.client.Create(context.TODO(), vmSpec); err != nil && !k8serrors.IsAlreadyExists(err) {
 		message := fmt.Sprintf("Error while creating virtual machine %s/%s: %s", vmSpec.Namespace, vmSpec.Name, err)
 		// Update event:
 		r.recorder.Event(instance, corev1.EventTypeWarning, EventVMCreationFailed, message)
@@ -620,10 +670,10 @@ func setTrackerLabel(meta metav1.ObjectMeta, instance *v2vv1alpha1.VirtualMachin
 
 // startVM start the VM if was requested to be started and VM disks are imported and ready:
 func (r *ReconcileVirtualMachineImport) startVM(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) error {
-	if shouldStartVM(instance) {
-		vmi := &kubevirtv1.VirtualMachineInstance{}
-		err := r.client.Get(context.TODO(), vmName, vmi)
-		if err != nil && errors.IsNotFound(err) {
+	vmi := &kubevirtv1.VirtualMachineInstance{}
+	err := r.client.Get(context.TODO(), vmName, vmi)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
 			if err = r.updateProgress(instance, progressStartVM); err != nil {
 				return err
 			}
@@ -632,26 +682,24 @@ func (r *ReconcileVirtualMachineImport) startVM(provider provider.Provider, inst
 				r.recorder.Eventf(instance, corev1.EventTypeWarning, EventVMStartFailed, "Virtual Machine %s/%s failed to start: %s", vmName.Namespace, vmName.Name, err)
 				return err
 			}
-		} else if err == nil {
-			if vmi.Status.Phase == kubevirtv1.Running || vmi.Status.Phase == kubevirtv1.Scheduled {
-				// Emit event vm is successfully imported and started:
-				r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s imported and started", vmName.Namespace, vmName.Name)
+		}
+		return err
+	}
 
-				if err = r.updateConditionsAfterSuccess(instance, "Virtual machine running", v2vv1alpha1.VirtualMachineRunning); err != nil {
-					return err
-				}
-				if err = r.updateProgress(instance, progressDone); err != nil {
-					return err
-				}
-				if err = r.afterSuccess(vmName, provider, instance); err != nil {
-					return err
-				}
-			}
-		} else {
+	if vmi.Status.Phase == kubevirtv1.Running || vmi.Status.Phase == kubevirtv1.Scheduled {
+		// Emit event vm is successfully imported and started:
+		r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s imported and started", vmName.Namespace, vmName.Name)
+
+		if err = r.updateConditionsAfterSuccess(instance, "Virtual machine running", v2vv1alpha1.VirtualMachineRunning); err != nil {
+			return err
+		}
+		if err = r.updateProgress(instance, progressDone); err != nil {
+			return err
+		}
+		if err = r.afterSuccess(vmName, provider, instance); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -688,18 +736,74 @@ func shouldStartVM(instance *v2vv1alpha1.VirtualMachineImport) bool {
 }
 
 // manageDataVolumeState update current state according to progress of import
-func (r *ReconcileVirtualMachineImport) manageDataVolumeState(instance *v2vv1alpha1.VirtualMachineImport, dvsDone map[string]bool, numberOfDvs int) (bool, error) {
+func (r *ReconcileVirtualMachineImport) isDoneImport(instance *v2vv1alpha1.VirtualMachineImport, dvsDone map[string]bool, numberOfDvs int) (bool, error) {
 	// Count successfully imported dvs:
 	done := utils.CountImportedDataVolumes(dvsDone)
 
 	// If all DVs was imported - update state
 	allDone := done == numberOfDvs
-	if allDone && !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1alpha1.VirtualMachineReady, v2vv1alpha1.VirtualMachineRunning) {
-		if err := r.updateConditionsAfterSuccess(instance, "Virtual machine disks import done", v2vv1alpha1.VirtualMachineReady); err != nil {
-			return false, err
-		}
-	}
+
 	return allDone, nil
+}
+
+func (r *ReconcileVirtualMachineImport) makeV2VJobSpec(vmName types.NamespacedName) *batchv1.Job {
+	completions := int32(1)
+	parallelism := int32(1)
+	return &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Job",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName:               vmName.Name + "-virt-v2v",
+			Namespace:                  vmName.Namespace,
+			Labels:                     map[string]string{
+				VirtV2VJobLabel: vmName.Name,
+			},
+			Annotations:                nil,
+			OwnerReferences:            nil,
+		},
+		Spec: batchv1.JobSpec{
+			Completions: &completions,
+			Parallelism: &parallelism,
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "virt-v2v",
+					Namespace:       vmName.Namespace,
+					Labels:          nil,
+					Annotations:     nil,
+					OwnerReferences: nil,
+				},
+				Spec: v1.PodSpec{
+					Volumes: nil,
+					RestartPolicy: v1.RestartPolicyOnFailure,
+					Containers: []v1.Container{
+						{
+							Name:                     "virt-v2v",
+							Image:                    "busybox",
+							Args:                     []string{
+								"/bin/sh",
+								"-c",
+								"date; echo $VM_NAME; sleep 30s; echo running virt-v2v",
+							},
+							WorkingDir:               "",
+							Ports:                    nil,
+							EnvFrom:                  nil,
+							Env:                      []v1.EnvVar{
+								{
+									Name:      "VM_NAME",
+									Value:     vmName.Name,
+									ValueFrom: nil,
+								},
+							},
+						},
+					},
+				},
+			},
+			TTLSecondsAfterFinished: nil,
+		},
+		Status: batchv1.JobStatus{},
+	}
 }
 
 func (r *ReconcileVirtualMachineImport) createDataVolume(provider provider.Provider, mapper provider.Mapper, instance *v2vv1alpha1.VirtualMachineImport, dv cdiv1.DataVolume, vmName types.NamespacedName) error {
@@ -1038,7 +1142,7 @@ func (r *ReconcileVirtualMachineImport) initProvider(instance *v2vv1alpha1.Virtu
 	// Fetch source provider secret
 	sourceProviderSecretObj, err := r.fetchSecret(instance)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			message := "Secret not found"
 			cerr := r.upsertValidationCondition(instance, v2vv1alpha1.SecretNotFound, message, err)
 			if cerr != nil {
@@ -1116,7 +1220,7 @@ func (r *ReconcileVirtualMachineImport) fetchVM(instance *v2vv1alpha1.VirtualMac
 	// Load the external resource mapping
 	resourceMapping, err := r.fetchResourceMapping(instance.Spec.ResourceMapping, instance.Namespace)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			condition := newValidationCondition(v2vv1alpha1.ResourceMappingNotFound, "Resource mapping not found")
 			cerr := r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, condition)
 			if cerr != nil {

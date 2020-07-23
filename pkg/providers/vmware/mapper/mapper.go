@@ -284,6 +284,17 @@ func (r *VmwareMapper) MapDisk(vmSpec *kubevirtv1.VirtualMachine, dv cdiv1.DataV
 
 // ResolveVMName resolves the target VM name
 func (r *VmwareMapper) ResolveVMName(targetVMName *string) *string {
+	vmNameBase := r.resolveVMNameBase(targetVMName)
+	if vmNameBase == nil {
+		return nil
+	}
+	// VM name is put in label values and has to be shorter than regular k8s name
+	// https://bugzilla.redhat.com/1857165
+	name := utils.EnsureLabelValueLength(*vmNameBase)
+	return &name
+}
+
+func (r *VmwareMapper) resolveVMNameBase(targetVMName *string) *string {
 	if targetVMName != nil {
 		return targetVMName
 	}
@@ -292,7 +303,6 @@ func (r *VmwareMapper) ResolveVMName(targetVMName *string) *string {
 	if err != nil {
 		return nil
 	}
-
 	return &name
 }
 
@@ -322,9 +332,6 @@ func (r *VmwareMapper) CreateEmptyVM(vmName *string) *kubevirtv1.VirtualMachine 
 
 // MapVM maps resources from a VMware VM to a Kubevirt VM
 func (r *VmwareMapper) MapVM(targetVmName *string, vmSpec *kubevirtv1.VirtualMachine) (*kubevirtv1.VirtualMachine, error) {
-	if vmSpec.Spec.Template == nil {
-		vmSpec.Spec.Template = &kubevirtv1.VirtualMachineInstanceTemplateSpec{}
-	}
 	// Set Namespace
 	vmSpec.ObjectMeta.Namespace = r.namespace
 

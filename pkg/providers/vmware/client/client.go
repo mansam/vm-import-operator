@@ -69,15 +69,27 @@ func (r RichVmwareClient) GetVM(id *string, name *string, _ *string, _ *string) 
 	return nil, errors.New("not found")
 }
 
+func (r RichVmwareClient) getVMByMoRef(moRef string) *object.VirtualMachine {
+	ref := types.ManagedObjectReference{
+		Type:  "VirtualMachine",
+		Value: moRef,
+	}
+	return object.NewVirtualMachine(r.client, ref)
+}
+
 // getVMByUUID gets a VM by its UUID
 func (r RichVmwareClient) getVMByUUID(id string) (*object.VirtualMachine, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	searchIndex := object.NewSearchIndex(r.client)
 	instanceUUID := false
-	vmRef, err := searchIndex.FindByUuid(ctx, nil, id, true, &instanceUUID)
+	mutated := id +"s"
+	vmRef, err := searchIndex.FindByUuid(ctx, nil, mutated[:len(mutated)-1], true, &instanceUUID)
 	if err != nil {
 		return nil, err
+	}
+	if vmRef == nil {
+		return nil, errors.New("not found by uuid " + id + " mutated: " + mutated)
 	}
 	vm := object.NewVirtualMachine(r.client, vmRef.Reference())
 	return vm, nil
@@ -128,14 +140,11 @@ func (r RichVmwareClient) GetVMHostProperties(vm *object.VirtualMachine) (*mo.Ho
 }
 
 // StartVM requests VM start and doesn't wait for it to complete.
-func (r RichVmwareClient) StartVM(id string) error {
+func (r RichVmwareClient) StartVM(moRef string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	vm, err := r.getVMByUUID(id)
-	if err != nil {
-		return err
-	}
+	vm := r.getVMByMoRef(moRef)
 	powerState, err := vm.PowerState(ctx)
 	if err != nil {
 		return err
@@ -150,14 +159,11 @@ func (r RichVmwareClient) StartVM(id string) error {
 }
 
 // StopVM stops the VM and waits for the vm to be stopped.
-func (r RichVmwareClient) StopVM(id string) error {
+func (r RichVmwareClient) StopVM(moRef string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	vm, err := r.getVMByUUID(id)
-	if err != nil {
-		return err
-	}
+	vm := r.getVMByMoRef(moRef)
 	powerState, err := vm.PowerState(ctx)
 	if err != nil {
 		return err
