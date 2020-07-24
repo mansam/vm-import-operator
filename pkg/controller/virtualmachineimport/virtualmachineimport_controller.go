@@ -292,7 +292,7 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 	}
 
 	if instance.Spec.Source.Vmware != nil && !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1alpha1.VirtualMachineReady, v2vv1alpha1.VirtualMachineRunning) {
-		done, err = r.translateDisks(vmName)
+		done, err = r.translateDisks(instance, vmName)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -368,6 +368,24 @@ func (r *ReconcileVirtualMachineImport) addWatchForImportPod(instance *v2vv1alph
 	)
 }
 
+func (r *ReconcileVirtualMachineImport) addWatchForTranslateJob(instance *v2vv1alpha1.VirtualMachineImport) error {
+	return r.controller.Watch(
+		&source.Kind{Type: &batchv1.Job{}},
+		&handler.EnqueueRequestsFromMapFunc{
+			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
+				if label, ok := a.Meta.GetLabels()[VirtV2VJobLabel]; ok && label == instance.Name {
+					return []reconcile.Request{
+						{NamespacedName: types.NamespacedName{
+							Name:      instance.Name,
+							Namespace: instance.Namespace,
+						}},
+					}
+				}
+				return nil
+			}),
+		},
+	)
+}
 
 func (r *ReconcileVirtualMachineImport) findV2VJob(vmName types.NamespacedName) (*batchv1.Job, error) {
 	jobList := &batchv1.JobList{}
@@ -382,22 +400,31 @@ func (r *ReconcileVirtualMachineImport) findV2VJob(vmName types.NamespacedName) 
 	return nil, nil
 }
 
-func (r *ReconcileVirtualMachineImport) translateDisks(vmName types.NamespacedName) (bool, error) {
-	job, err := r.findV2VJob(vmName)
+func (r *ReconcileVirtualMachineImport) translateDisks(instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
+	err := r.addWatchForTranslateJob(instance)
+	if err != nil {
+		return false, err
+	}
+	instanceName := types.NamespacedName{
+		Namespace: instance.Namespace,
+		Name:      instance.Name,
+	}
+
+	job, err := r.findV2VJob(instanceName)
 	if err != nil {
 		return false, err
 	}
 	// the job doesn't exist, so create it
 	// TODO: need to handle the case where the job doesn't exist because we're already done
 	if job == nil {
-		job = r.makeV2VJobSpec(vmName)
+		job = r.makeV2VJobSpec(instanceName)
 		err := r.client.Create(context.TODO(), job)
 		if err != nil {
 			return false, err
 		}
 	}
 
-	return job.Status.Succeeded == int32(1), nil
+	return job.Status.Succeeded == 1, nil
 }
 
 func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
