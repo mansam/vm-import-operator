@@ -44,7 +44,7 @@ import (
 )
 
 const (
-	AnnAPIGroup = "vmimport.v2v.kubevirt.io"
+	AnnAPIGroup          = "vmimport.v2v.kubevirt.io"
 	sourceVMInitialState = AnnAPIGroup + "/source-vm-initial-state"
 	// AnnCurrentProgress is annotations storing current progress of the vm import
 	AnnCurrentProgress = AnnAPIGroup + "/progress"
@@ -52,8 +52,8 @@ const (
 	AnnPropagate = AnnAPIGroup + "/propagate-annotations"
 	// TrackingLabel is a label used to track related entities.
 	TrackingLabel = AnnAPIGroup + "/tracker"
-	// VirtV2VJobLabel is a label used to track virt-v2v jobs
-	VirtV2VJobLabel = AnnAPIGroup + "/virt-v2v"
+	// VMLabel is a label used to track resources created for a VM
+	VMLabel = AnnAPIGroup + "/vm"
 	// constants
 	progressStart         = "0"
 	progressCreatingVM    = "5"
@@ -81,6 +81,8 @@ const (
 	EventVMCreationFailed = "VMCreationFailed"
 	// EventDVCreationFailed is emitted when creation of datavolume fails
 	EventDVCreationFailed = "DVCreationFailed"
+	// EventGuestConversionFailed is emitted when the virt-v2v conversion job fails.
+	EventGuestConversionFailed = "GuestConversionFailed"
 )
 
 var (
@@ -161,6 +163,16 @@ func add(mgr manager.Manager, r *ReconcileVirtualMachineImport) error {
 			OwnerType:    &v2vv1alpha1.VirtualMachineImport{},
 		},
 	)
+	if err != nil {
+		return err
+	}
+
+	err = c.Watch(
+		&source.Kind{Type: &batchv1.Job{}},
+		&handler.EnqueueRequestForOwner{
+			IsController: true,
+			OwnerType:    &v2vv1alpha1.VirtualMachineImport{},
+		})
 	if err != nil {
 		return err
 	}
@@ -292,7 +304,7 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 	}
 
 	if instance.Spec.Source.Vmware != nil && !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1alpha1.VirtualMachineReady, v2vv1alpha1.VirtualMachineRunning) {
-		done, err = r.translateDisks(instance, vmName)
+		done, err = r.convertGuest(provider, instance, vmName)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -368,28 +380,38 @@ func (r *ReconcileVirtualMachineImport) addWatchForImportPod(instance *v2vv1alph
 	)
 }
 
-func (r *ReconcileVirtualMachineImport) addWatchForTranslateJob(instance *v2vv1alpha1.VirtualMachineImport) error {
-	return r.controller.Watch(
-		&source.Kind{Type: &batchv1.Job{}},
-		&handler.EnqueueRequestsFromMapFunc{
-			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
-				if label, ok := a.Meta.GetLabels()[VirtV2VJobLabel]; ok && label == instance.Name {
-					return []reconcile.Request{
-						{NamespacedName: types.NamespacedName{
-							Name:      instance.Name,
-							Namespace: instance.Namespace,
-						}},
-					}
-				}
-				return nil
-			}),
-		},
-	)
+func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
+	job, err := r.findGuestConversionJob(vmName)
+	if err != nil {
+		return false, err
+	}
+	// the job doesn't exist, so create it
+	// TODO: need to handle the case where the job doesn't exist because we're already done
+	if job == nil {
+		job = r.makeGuestConversionJobSpec(instance, vmName)
+		// Set VirtualMachineImport instance as the owner and controller
+		if err := controllerutil.SetControllerReference(instance, job, r.scheme); err != nil {
+			return false, err
+		}
+		err := r.client.Create(context.TODO(), job)
+		if err != nil {
+			return false, err
+		}
+	}
+	if job.Status.Failed > 0 {
+		err := r.endGuestConversionAsFailed(provider, instance, vmName, "virt-v2v job failed")
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	return job.Status.Succeeded == 1, nil
 }
 
-func (r *ReconcileVirtualMachineImport) findV2VJob(vmName types.NamespacedName) (*batchv1.Job, error) {
+func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.NamespacedName) (*batchv1.Job, error) {
 	jobList := &batchv1.JobList{}
-	matchingLabels := client.MatchingLabels(map[string]string{VirtV2VJobLabel: vmName.Name})
+	matchingLabels := client.MatchingLabels(map[string]string{VMLabel: vmName.Name})
 	err := r.client.List(context.TODO(), jobList, matchingLabels)
 	if err != nil {
 		return nil, err
@@ -400,32 +422,56 @@ func (r *ReconcileVirtualMachineImport) findV2VJob(vmName types.NamespacedName) 
 	return nil, nil
 }
 
-func (r *ReconcileVirtualMachineImport) translateDisks(instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
-	err := r.addWatchForTranslateJob(instance)
-	if err != nil {
-		return false, err
+func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) *batchv1.Job {
+	completions := int32(1)
+	parallelism := int32(1)
+	return &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Job",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "virt-v2v-",
+			Namespace:    vmName.Namespace,
+			Labels: map[string]string{
+				VMLabel: vmName.Name,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			Completions: &completions,
+			Parallelism: &parallelism,
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "virt-v2v",
+					Namespace:       instance.Namespace,
+				},
+				Spec: v1.PodSpec{
+					RestartPolicy: v1.RestartPolicyOnFailure,
+					Containers: []v1.Container{
+						{
+							Name:  "virt-v2v",
+							Image: "busybox",
+							Args: []string{
+								"/bin/sh",
+								"-c",
+								"date; echo $VM_NAME; sleep 30s; echo running virt-v2v",
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:      "VM_NAME",
+									Value:     vmName.Name,
+									ValueFrom: nil,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: batchv1.JobStatus{},
 	}
-	instanceName := types.NamespacedName{
-		Namespace: instance.Namespace,
-		Name:      instance.Name,
-	}
-
-	job, err := r.findV2VJob(instanceName)
-	if err != nil {
-		return false, err
-	}
-	// the job doesn't exist, so create it
-	// TODO: need to handle the case where the job doesn't exist because we're already done
-	if job == nil {
-		job = r.makeV2VJobSpec(instanceName)
-		err := r.client.Create(context.TODO(), job)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	return job.Status.Succeeded == 1, nil
 }
+
 
 func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
 	dvs, err := mapper.MapDataVolumes(&vmName.Name)
@@ -507,6 +553,38 @@ func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, 
 	// Update status if disk import is done:
 	done, err := r.isDoneImport(instance, dvsDone, len(dvs))
 	return done, err
+}
+
+func (r *ReconcileVirtualMachineImport) endGuestConversionAsFailed(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName, message string) error {
+	errorMessage := fmt.Sprintf("Error converting guests for VM %s: %s", vmName.Name, message)
+	instanceNamespacedName := types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}
+
+	// Update processing condition to failed:
+	processingCond := conditions.NewProcessingCondition(string(v2vv1alpha1.ProcessingFailed), errorMessage, corev1.ConditionFalse)
+	if err := r.upsertStatusConditions(instanceNamespacedName, processingCond); err != nil {
+		return err
+	}
+
+	// Update succeed condition to failed:
+	succeededCond := conditions.NewSucceededCondition(string(v2vv1alpha1.GuestConversionFailed), errorMessage, corev1.ConditionFalse)
+	if err := r.upsertStatusConditions(instanceNamespacedName, succeededCond); err != nil {
+		return err
+	}
+
+	// Update progress to done.
+	if err := r.updateProgress(instance, progressDone); err != nil {
+		return err
+	}
+
+	// Update event:
+	r.recorder.Event(instance, corev1.EventTypeWarning, EventGuestConversionFailed, message)
+
+	// Cleanup
+	if err := r.afterFailure(provider, instance); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ReconcileVirtualMachineImport) endImportAsFailed(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, dv *cdiv1.DataVolume, message string) error {
@@ -771,66 +849,6 @@ func (r *ReconcileVirtualMachineImport) isDoneImport(instance *v2vv1alpha1.Virtu
 	allDone := done == numberOfDvs
 
 	return allDone, nil
-}
-
-func (r *ReconcileVirtualMachineImport) makeV2VJobSpec(vmName types.NamespacedName) *batchv1.Job {
-	completions := int32(1)
-	parallelism := int32(1)
-	return &batchv1.Job{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Job",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName:               vmName.Name + "-virt-v2v",
-			Namespace:                  vmName.Namespace,
-			Labels:                     map[string]string{
-				VirtV2VJobLabel: vmName.Name,
-			},
-			Annotations:                nil,
-			OwnerReferences:            nil,
-		},
-		Spec: batchv1.JobSpec{
-			Completions: &completions,
-			Parallelism: &parallelism,
-			Template: v1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:            "virt-v2v",
-					Namespace:       vmName.Namespace,
-					Labels:          nil,
-					Annotations:     nil,
-					OwnerReferences: nil,
-				},
-				Spec: v1.PodSpec{
-					Volumes: nil,
-					RestartPolicy: v1.RestartPolicyOnFailure,
-					Containers: []v1.Container{
-						{
-							Name:                     "virt-v2v",
-							Image:                    "busybox",
-							Args:                     []string{
-								"/bin/sh",
-								"-c",
-								"date; echo $VM_NAME; sleep 30s; echo running virt-v2v",
-							},
-							WorkingDir:               "",
-							Ports:                    nil,
-							EnvFrom:                  nil,
-							Env:                      []v1.EnvVar{
-								{
-									Name:      "VM_NAME",
-									Value:     vmName.Name,
-									ValueFrom: nil,
-								},
-							},
-						},
-					},
-				},
-			},
-			TTLSecondsAfterFinished: nil,
-		},
-		Status: batchv1.JobStatus{},
-	}
 }
 
 func (r *ReconcileVirtualMachineImport) createDataVolume(provider provider.Provider, mapper provider.Mapper, instance *v2vv1alpha1.VirtualMachineImport, dv cdiv1.DataVolume, vmName types.NamespacedName) error {
