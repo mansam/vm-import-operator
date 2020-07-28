@@ -55,13 +55,14 @@ const (
 	// VMLabel is a label used to track resources created for a VM
 	VMLabel = AnnAPIGroup + "/vm"
 	// constants
-	progressStart         = "0"
-	progressCreatingVM    = "5"
-	progressCopyingDisks  = "10"
-	progressStartVM       = "90"
-	progressDone          = "100"
-	progressForCopyDisk   = 75
-	progressCopyDiskRange = float64(progressForCopyDisk / 100.0)
+	progressStart           = "0"
+	progressCreatingVM      = "5"
+	progressCopyingDisks    = "10"
+	progressConvertingGuest = "70"
+	progressStartVM         = "90"
+	progressDone            = "100"
+	progressForCopyDisk     = 65
+	progressCopyDiskRange   = float64(progressForCopyDisk / 100.0)
 
 	requeueAfterValidationFailureTime = 5 * time.Second
 	podCrashLoopBackOff               = "CrashLoopBackOff"
@@ -397,16 +398,30 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 		if err != nil {
 			return false, err
 		}
+		processingCond := conditions.NewProcessingCondition(string(v2vv1alpha1.ConvertingGuest), "Running virt-v2v", corev1.ConditionTrue)
+		err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, processingCond)
+		if err != nil {
+			return false, err
+		}
+		// Update progress to copying disks:
+		if err = r.updateProgress(instance, progressConvertingGuest); err != nil {
+			return false, err
+		}
 	}
+
+	if job.Status.Active > 0 {
+		return false, nil
+	}
+
 	if job.Status.Failed > 0 {
-		err := r.endGuestConversionAsFailed(provider, instance, vmName, "virt-v2v job failed")
+		err := r.endGuestConversionAsFailed(provider, instance, "virt-v2v job failed")
 		if err != nil {
 			return false, err
 		}
 		return false, nil
 	}
 
-	return job.Status.Succeeded == 1, nil
+	return job.Status.Succeeded > 0, nil
 }
 
 func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.NamespacedName) (*batchv1.Job, error) {
@@ -425,6 +440,7 @@ func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.Name
 func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName) *batchv1.Job {
 	completions := int32(1)
 	parallelism := int32(1)
+	backoffLimit := int32(0)
 	return &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Job",
@@ -438,15 +454,16 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 			},
 		},
 		Spec: batchv1.JobSpec{
-			Completions: &completions,
-			Parallelism: &parallelism,
+			Completions:  &completions,
+			Parallelism:  &parallelism,
+			BackoffLimit: &backoffLimit,
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:            "virt-v2v",
-					Namespace:       instance.Namespace,
+					Name:      "virt-v2v",
+					Namespace: instance.Namespace,
 				},
 				Spec: v1.PodSpec{
-					RestartPolicy: v1.RestartPolicyOnFailure,
+					RestartPolicy: v1.RestartPolicyNever,
 					Containers: []v1.Container{
 						{
 							Name:  "virt-v2v",
@@ -471,7 +488,6 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		Status: batchv1.JobStatus{},
 	}
 }
-
 
 func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
 	dvs, err := mapper.MapDataVolumes(&vmName.Name)
@@ -555,8 +571,8 @@ func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, 
 	return done, err
 }
 
-func (r *ReconcileVirtualMachineImport) endGuestConversionAsFailed(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, vmName types.NamespacedName, message string) error {
-	errorMessage := fmt.Sprintf("Error converting guests for VM %s: %s", vmName.Name, message)
+func (r *ReconcileVirtualMachineImport) endGuestConversionAsFailed(provider provider.Provider, instance *v2vv1alpha1.VirtualMachineImport, message string) error {
+	errorMessage := fmt.Sprintf("Error converting guests: %s", message)
 	instanceNamespacedName := types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}
 
 	// Update processing condition to failed:
