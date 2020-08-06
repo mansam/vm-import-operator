@@ -59,7 +59,7 @@ func BeProcessing(testFramework *framework.Framework) types.GomegaMatcher {
 // BeSuccessful creates the matcher checking whether Virtual Machine Import is successful
 func BeSuccessful(testFramework *framework.Framework) types.GomegaMatcher {
 	matcher := hasConditionInStatus{}
-	matcher.timeout = 3 * time.Minute
+	matcher.timeout = 1 * time.Minute
 	matcher.pollInterval = 5 * time.Second
 	matcher.testFramework = testFramework
 

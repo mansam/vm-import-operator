@@ -653,6 +653,11 @@ func (in *VirtualMachineImportVmwareSourceVMSpec) DeepCopyInto(out *VirtualMachi
 		*out = new(string)
 		**out = **in
 	}
+	if in.Name != nil {
+		in, out := &in.Name, &out.Name
+		*out = new(string)
+		**out = **in
+	}
 	return
 }
 

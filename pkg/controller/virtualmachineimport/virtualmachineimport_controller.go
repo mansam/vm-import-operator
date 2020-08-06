@@ -468,6 +468,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 						{
 							Name:  "virt-v2v",
 							Image: "busybox",
+							ImagePullPolicy: v1.PullIfNotPresent,
 							Args: []string{
 								"/bin/sh",
 								"-c",
