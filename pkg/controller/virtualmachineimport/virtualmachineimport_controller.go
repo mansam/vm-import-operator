@@ -8,15 +8,14 @@ import (
 	"fmt"
 	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"libvirt.org/libvirt-go-xml"
 	"github.com/kubevirt/vm-import-operator/pkg/config"
 	"github.com/kubevirt/vm-import-operator/pkg/metrics"
+	libvirtxml "libvirt.org/libvirt-go-xml"
 
 	v2vv1alpha1 "github.com/kubevirt/vm-import-operator/pkg/apis/v2v/v1alpha1"
 	pclient "github.com/kubevirt/vm-import-operator/pkg/client"
@@ -392,8 +391,8 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 		return false, err
 	}
 
-	libvirtDisks := make([]libvirtxml.DomainDisk, len(vmSpec.Spec.DataVolumeTemplates))
-	for i := range vmSpec.Spec.DataVolumeTemplates {
+	libvirtDisks := make([]libvirtxml.DomainDisk, 0)
+	for i := range vmSpec.Spec.Template.Spec.Volumes {
 		libvirtDisk := libvirtxml.DomainDisk{
 			Device: 		"disk",
 			Driver:       &libvirtxml.DomainDiskDriver{
@@ -402,7 +401,7 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 			},
 			Source:       &libvirtxml.DomainDiskSource{
 				File:          &libvirtxml.DomainDiskSourceFile{
-					File:     "/mnt/disks/disk" + string(i),
+					File:     fmt.Sprintf("/mnt/disks/disk%v", i),
 				},
 			},
 			Target:       &libvirtxml.DomainDiskTarget{
@@ -420,7 +419,7 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 		Type: "kvm",
 		Name: vmSpec.Name,
 		Memory: &libvirtxml.DomainMemory{
-			Value:    uint(domain.Memory.Guest.Value()),
+			Value:    uint(domain.Resources.Requests.Memory().Value()),
 		},
 		CPU: &libvirtxml.DomainCPU{
 			Topology:   &libvirtxml.DomainCPUTopology{
@@ -442,6 +441,26 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 		Devices: &libvirtxml.DomainDeviceList{
 			Disks:        libvirtDisks,
 		},
+	}
+	domxml, err := xml.Marshal(domcfg)
+	if err != nil {
+		return false, err
+	}
+
+	//err = r.createLibvirtDomainXMLConfigMap(domxml)
+	domainXMLConfigMap := v1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: vmName.Name,
+			Namespace: vmName.Namespace,
+		},
+		Data:       nil,
+		BinaryData: map[string][]byte{
+			"input.xml": domxml,
+		},
+	}
+	err = r.client.Create(context.TODO(), &domainXMLConfigMap)
+	if err != nil {
+		return false, err
 	}
 
 	job, err := r.findGuestConversionJob(vmName)
@@ -504,14 +523,14 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 	parallelism := int32(1)
 	backoffLimit := int32(0)
 
-	volumes := make([]v1.Volume, len(vmSpec.Spec.DataVolumeTemplates))
-	volumeMounts := make([]v1.VolumeMount, len(vmSpec.Spec.DataVolumeTemplates))
-	for i, dataVolume := range vmSpec.Spec.DataVolumeTemplates {
+	volumes := make([]v1.Volume, 0)
+	volumeMounts := make([]v1.VolumeMount, 0)
+	for i, dataVolume := range vmSpec.Spec.Template.Spec.Volumes {
 		vol := v1.Volume{
-			Name:        dataVolume.Name,
+			Name:        dataVolume.DataVolume.Name,
 			VolumeSource: v1.VolumeSource{
 				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-					ClaimName: dataVolume.Name,
+					ClaimName: dataVolume.DataVolume.Name,
 					ReadOnly:  false,
 				},
 			},
@@ -519,11 +538,25 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		volumes = append(volumes, vol)
 
 		volMount := v1.VolumeMount{
-			Name:             dataVolume.Name,
-			MountPath:        "/mnt/disks/disk" + string(i),
+			Name:             dataVolume.DataVolume.Name,
+			MountPath:        fmt.Sprintf("/mnt/disks/disk%v", i),
 		}
 		volumeMounts = append(volumeMounts, volMount)
 	}
+	volumes = append(volumes, v1.Volume{
+		Name: vmSpec.Name,
+		VolumeSource: v1.VolumeSource{
+			ConfigMap: &v1.ConfigMapVolumeSource{
+				LocalObjectReference: v1.LocalObjectReference{
+					Name: vmSpec.Name,
+				},
+			},
+		},
+	})
+	volumeMounts = append(volumeMounts, v1.VolumeMount{
+		Name:             vmSpec.Name,
+		MountPath:        "/mnt/v2v",
+	})
 
 	return &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
