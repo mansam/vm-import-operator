@@ -1367,6 +1367,8 @@ kubevirt.io/containerized-data-importer v1.15.0 h1:6GN4NbQX0VTbG7DcGfOWmW1cHChRk
 kubevirt.io/containerized-data-importer v1.15.0/go.mod h1:Sl6HMDIzQZ/psSKj/CjjgVWlQHFVLfHXIxeoQEGqshk=
 kubevirt.io/qe-tools v0.1.3 h1:ZDDolkD2IsHuPW8PNyty5fWO6wpI2BXcQpC65en/9FU=
 kubevirt.io/qe-tools v0.1.3/go.mod h1:PJyH/YXC4W0AmxfheDmXWMbLNsMSboVGXKpMAwfKzVE=
+libvirt.org/libvirt-go v6.6.0+incompatible h1:m+XEiSL/upHwFN7DnMJ6l1FQHqV/TYVqGkzi+aw2rW4=
+libvirt.org/libvirt-go v6.6.0+incompatible/go.mod h1:CPoljLoiC2aEw+62g1rZXl2oXAJaNsrq4YCSmJOELek=
 libvirt.org/libvirt-go-xml v6.6.0+incompatible h1:OjqCuSgsfv+Ig3x8Xt7P8rBM2lNCA69eMaID45LeH48=
 libvirt.org/libvirt-go-xml v6.6.0+incompatible/go.mod h1:FL+H1+hKNWDdkKQGGS4sGCZJ3pGWcjt6VbxZvPlQJkY=
 modernc.org/cc v1.0.0/go.mod h1:1Sk4//wdnYJiUIxnW8ddKpaOJCF37yAdqYnkxUpaYxw=
