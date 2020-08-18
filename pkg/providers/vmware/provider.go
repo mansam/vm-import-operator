@@ -33,6 +33,8 @@ import (
 
 const (
 	apiUrlKey       = "apiUrl"
+	usernameKey     = "username"
+	passwordKey     = "password"
 	keyAccessKey    = "accessKeyId"
 	keySecretKey    = "secretKey"
 	thumbprintKey   = "thumbprint"
@@ -294,10 +296,10 @@ func (r *VmwareProvider) CleanUp(failure bool, cr *v2vv1alpha1.VirtualMachineImp
 }
 
 func (r *VmwareProvider) prepareDataVolumeCredentials() (*mapper.DataVolumeCredentials, error) {
-	username := r.vmwareSecretDataMap[keyAccessKey]
-	password := r.vmwareSecretDataMap[keySecretKey]
+	username := r.vmwareSecretDataMap[usernameKey]
+	password := r.vmwareSecretDataMap[passwordKey]
 
-	secret, err := r.ensureSecretIsPresent(keyAccessKey, keySecretKey)
+	secret, err := r.ensureSecretIsPresent(username, password)
 	if err != nil {
 		return &mapper.DataVolumeCredentials{}, err
 	}
@@ -329,15 +331,15 @@ func (r *VmwareProvider) ensureSecretIsPresent(keyAccess, keySecret string) (*co
 	return secret, nil
 }
 
-func (r *VmwareProvider) createSecret(keyAccess, keySecret string) (*corev1.Secret, error) {
+func (r *VmwareProvider) createSecret(username, password string) (*corev1.Secret, error) {
 	vmiName := k8stypes.NamespacedName{
 		Name:      r.vmiObjectMeta.Name,
 		Namespace: r.vmiObjectMeta.Namespace,
 	}
 	newSecret := corev1.Secret{
 		Data: map[string][]byte{
-			keyAccessKey:   []byte(keyAccess),
-			keySecretKey:   []byte(keySecret),
+			keyAccessKey: []byte(username),
+			keySecretKey: []byte(password),
 		},
 	}
 	newSecret.OwnerReferences = []metav1.OwnerReference{
