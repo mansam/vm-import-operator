@@ -146,7 +146,7 @@ func initOsInfoToCommon() map[string]string {
 		"windows_xp":          "win10",
 		// vmware guest identifiers
 		"centos6_64Guest":       "centos6.10",
-		"centos64Guest":         "centos5.11",
+		"centos64Guest":         "centos6.10",
 		"centos6Guest":          "centos6.10",
 		"centos7_64Guest":       "centos7.0",
 		"centos7Guest":          "centos7.0",
