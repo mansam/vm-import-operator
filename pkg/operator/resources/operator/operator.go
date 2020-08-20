@@ -258,6 +258,17 @@ func getControllerPolicyRules() []rbacv1.PolicyRule {
 				"list",
 			},
 		},
+		{
+			APIGroups: []string{
+				"batch",
+			},
+			Resources: []string{
+				"jobs",
+			},
+			Verbs: []string{
+				"*",
+			},
+		},
 	}
 	return rules
 }
