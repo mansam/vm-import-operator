@@ -620,7 +620,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJob(instance *v2vv1.V
 					Containers: []v1.Container{
 						{
 							Name:            "virt-v2v",
-							Image:           "quay.io/fdupont-redhat/vm-import-v2v:virtv2v_fix_qcow2_identification",
+							Image:           "quay.io/fdupont-redhat/vm-import-virtv2v:virtv2v_fix_qcow2_identification",
 							ImagePullPolicy: v1.PullIfNotPresent,
 							VolumeMounts:    volumeMounts,
 						},
@@ -1046,66 +1046,6 @@ func (r *ReconcileVirtualMachineImport) isDoneImport(dvsDone map[string]bool, nu
 	done := utils.CountImportedDataVolumes(dvsDone)
 
 	return done == numberOfDvs
-}
-
-func (r *ReconcileVirtualMachineImport) makeV2VJobSpec(vmName types.NamespacedName) *batchv1.Job {
-	completions := int32(1)
-	parallelism := int32(1)
-	return &batchv1.Job{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Job",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: vmName.Name + "-virt-v2v",
-			Namespace:    vmName.Namespace,
-			Labels: map[string]string{
-				VMLabel: vmName.Name,
-			},
-			Annotations:     nil,
-			OwnerReferences: nil,
-		},
-		Spec: batchv1.JobSpec{
-			Completions: &completions,
-			Parallelism: &parallelism,
-			Template: v1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:            "virt-v2v",
-					Namespace:       vmName.Namespace,
-					Labels:          nil,
-					Annotations:     nil,
-					OwnerReferences: nil,
-				},
-				Spec: v1.PodSpec{
-					Volumes:       nil,
-					RestartPolicy: v1.RestartPolicyOnFailure,
-					Containers: []v1.Container{
-						{
-							Name:  "virt-v2v",
-							Image: "busybox",
-							Args: []string{
-								"/bin/sh",
-								"-c",
-								"date; echo $VM_NAME; sleep 30s; echo running virt-v2v",
-							},
-							WorkingDir: "",
-							Ports:      nil,
-							EnvFrom:    nil,
-							Env: []v1.EnvVar{
-								{
-									Name:      "VM_NAME",
-									Value:     vmName.Name,
-									ValueFrom: nil,
-								},
-							},
-						},
-					},
-				},
-			},
-			TTLSecondsAfterFinished: nil,
-		},
-		Status: batchv1.JobStatus{},
-	}
 }
 
 func (r *ReconcileVirtualMachineImport) createDataVolume(provider provider.Provider, mapper provider.Mapper, instance *v2vv1.VirtualMachineImport, dv cdiv1.DataVolume, vmName types.NamespacedName) error {
