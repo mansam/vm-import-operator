@@ -393,54 +393,45 @@ func (r *ReconcileVirtualMachineImport) addWatchForImportPod(instance *v2vv1.Vir
 	)
 }
 
-func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider, instance *v2vv1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
-	// find the vmspec
-	vmSpec := &kubevirtv1.VirtualMachine{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: vmName.Name, Namespace: vmName.Namespace}, vmSpec)
-	if err != nil {
-		return false, err
-	}
-
+func (r *ReconcileVirtualMachineImport) generateLibvirtDomain(vmSpec *kubevirtv1.VirtualMachine) *libvirtxml.Domain {
 	libvirtDisks := make([]libvirtxml.DomainDisk, 0)
 	for i := range vmSpec.Spec.Template.Spec.Volumes {
 		libvirtDisk := libvirtxml.DomainDisk{
-			Device: 		"disk",
-			Driver:       &libvirtxml.DomainDiskDriver{
-				Name:         "qemu",
-				Type:         "raw",
+			Device: "disk",
+			Driver: &libvirtxml.DomainDiskDriver{
+				Name: "qemu",
+				Type: "raw",
 			},
-			Source:       &libvirtxml.DomainDiskSource{
-				File:          &libvirtxml.DomainDiskSourceFile{
-					File:     fmt.Sprintf("/mnt/disks/disk%v/disk.img", i),
+			Source: &libvirtxml.DomainDiskSource{
+				File: &libvirtxml.DomainDiskSourceFile{
+					File: fmt.Sprintf("/mnt/disks/disk%v/disk.img", i),
 				},
 			},
-			Target:       &libvirtxml.DomainDiskTarget{
-				Dev:       "hd" + string('a' + i),
-				Bus:       "virtio",
+			Target: &libvirtxml.DomainDiskTarget{
+				Dev: "hd" + string('a'+i),
+				Bus: "virtio",
 			},
-
 		}
 		libvirtDisks = append(libvirtDisks, libvirtDisk)
 	}
 
 	// generate libvirt domain xml
 	domain := vmSpec.Spec.Template.Spec.Domain
-	domcfg := &libvirtxml.Domain{
+	return &libvirtxml.Domain{
 		Type: "kvm",
 		Name: vmSpec.Name,
 		Memory: &libvirtxml.DomainMemory{
-			Value:    uint(domain.Resources.Requests.Memory().Value()),
+			Value: uint(domain.Resources.Requests.Memory().Value()),
 		},
 		CPU: &libvirtxml.DomainCPU{
-			Topology:   &libvirtxml.DomainCPUTopology{
+			Topology: &libvirtxml.DomainCPUTopology{
 				Sockets: int(domain.CPU.Sockets),
 				Cores:   int(domain.CPU.Cores),
 			},
 		},
 		OS: &libvirtxml.DomainOS{
-
-			Type:        &libvirtxml.DomainOSType{
-				Type:    "hvm",
+			Type: &libvirtxml.DomainOSType{
+				Type: "hvm",
 			},
 			BootDevices: []libvirtxml.DomainBootDevice{
 				{
@@ -449,30 +440,26 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 			},
 		},
 		Devices: &libvirtxml.DomainDeviceList{
-			Disks:        libvirtDisks,
+			Disks: libvirtDisks,
 		},
 	}
-	domxml, err := xml.Marshal(domcfg)
+}
+
+func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider, instance *v2vv1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
+	// find the vmspec
+	vmSpec := &kubevirtv1.VirtualMachine{}
+	err := r.client.Get(context.TODO(), vmName, vmSpec)
 	if err != nil {
 		return false, err
 	}
 
-	//err = r.createLibvirtDomainXMLConfigMap(domxml)
-	domainXMLConfigMap := v1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: vmName.Name,
-			Namespace: vmName.Namespace,
-		},
-		Data:       nil,
-		BinaryData: map[string][]byte{
-			"input.xml": domxml,
-		},
-	}
-	err = r.client.Create(context.TODO(), &domainXMLConfigMap)
+	configMap, err := r.findLibvirtDomainConfigMap(vmName)
 	if err != nil {
-		if !k8serrors.IsAlreadyExists(err) {
-			return false, err
-		}
+		return false, err
+	}
+	if configMap == nil {
+		domain := r.generateLibvirtDomain(vmSpec)
+		configMap, err = r.makeLibvirtDomainConfigMap(vmSpec, domain)
 	}
 
 	job, err := r.findGuestConversionJob(vmName)
@@ -487,16 +474,19 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 		if err := controllerutil.SetControllerReference(instance, job, r.scheme); err != nil {
 			return false, err
 		}
+
 		err := r.client.Create(context.TODO(), job)
 		if err != nil {
 			return false, err
 		}
+
 		processingCond := conditions.NewProcessingCondition(string(v2vv1.ConvertingGuest), "Running virt-v2v", corev1.ConditionTrue)
 		err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, processingCond)
 		if err != nil {
 			return false, err
 		}
-		// Update progress to copying disks:
+
+		// Update progress to converting guest:
 		if err = r.updateProgress(instance, progressConvertingGuest); err != nil {
 			return false, err
 		}
@@ -515,6 +505,43 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 	}
 
 	return job.Status.Succeeded > 0, nil
+}
+
+func (r *ReconcileVirtualMachineImport) findLibvirtDomainConfigMap(vmName types.NamespacedName) (*v1.ConfigMap, error) {
+	configMapList := &v1.ConfigMapList{}
+	matchingLabels := client.MatchingLabels(map[string]string{VMLabel: vmName.Name})
+	err := r.client.List(context.TODO(), configMapList, matchingLabels)
+	if err != nil {
+		return nil, err
+	}
+	if len(configMapList.Items) > 0 {
+		return &configMapList.Items[0], nil
+	}
+	return nil, nil
+}
+
+func (r *ReconcileVirtualMachineImport) makeLibvirtDomainConfigMap(vmSpec *kubevirtv1.VirtualMachine, domain *libvirtxml.Domain) (*v1.ConfigMap, error) {
+	domxml, err := xml.Marshal(domain)
+	if err != nil {
+		return nil, err
+	}
+	domainXMLConfigMap := &v1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: vmSpec.Name + "-",
+			Namespace:    vmSpec.Namespace,
+			Labels: map[string]string{
+				VMLabel: vmSpec.Name,
+			},
+		},
+		BinaryData: map[string][]byte{
+			"input.xml": domxml,
+		},
+	}
+	err = r.client.Create(context.TODO(), domainXMLConfigMap)
+	if err != nil {
+		return nil, err
+	}
+	return domainXMLConfigMap, nil
 }
 
 func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.NamespacedName) (*batchv1.Job, error) {
@@ -539,7 +566,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 	volumeMounts := make([]v1.VolumeMount, 0)
 	for i, dataVolume := range vmSpec.Spec.Template.Spec.Volumes {
 		vol := v1.Volume{
-			Name:        dataVolume.DataVolume.Name,
+			Name: dataVolume.DataVolume.Name,
 			VolumeSource: v1.VolumeSource{
 				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
 					ClaimName: dataVolume.DataVolume.Name,
@@ -550,8 +577,8 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		volumes = append(volumes, vol)
 
 		volMount := v1.VolumeMount{
-			Name:             dataVolume.DataVolume.Name,
-			MountPath:        fmt.Sprintf("/mnt/disks/disk%v", i),
+			Name:      dataVolume.DataVolume.Name,
+			MountPath: fmt.Sprintf("/mnt/disks/disk%v", i),
 		}
 		volumeMounts = append(volumeMounts, volMount)
 	}
@@ -566,8 +593,8 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		},
 	})
 	volumeMounts = append(volumeMounts, v1.VolumeMount{
-		Name:             vmSpec.Name,
-		MountPath:        "/mnt/v2v",
+		Name:      vmSpec.Name,
+		MountPath: "/mnt/v2v",
 	})
 
 	return &batchv1.Job{
@@ -595,10 +622,10 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 					RestartPolicy: v1.RestartPolicyNever,
 					Containers: []v1.Container{
 						{
-							Name:  "virt-v2v",
-							Image: "quay.io/fdupont-redhat/vm-import-v2v:virtv2v_fix_qcow2_identification",
+							Name:            "virt-v2v",
+							Image:           "quay.io/fdupont-redhat/vm-import-v2v:virtv2v_fix_qcow2_identification",
 							ImagePullPolicy: v1.PullIfNotPresent,
-							VolumeMounts: volumeMounts,
+							VolumeMounts:    volumeMounts,
 						},
 					},
 					Volumes: volumes,
@@ -1020,13 +1047,13 @@ func (r *ReconcileVirtualMachineImport) makeV2VJobSpec(vmName types.NamespacedNa
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName:               vmName.Name + "-virt-v2v",
-			Namespace:                  vmName.Namespace,
-			Labels:                     map[string]string{
+			GenerateName: vmName.Name + "-virt-v2v",
+			Namespace:    vmName.Namespace,
+			Labels: map[string]string{
 				VMLabel: vmName.Name,
 			},
-			Annotations:                nil,
-			OwnerReferences:            nil,
+			Annotations:     nil,
+			OwnerReferences: nil,
 		},
 		Spec: batchv1.JobSpec{
 			Completions: &completions,
@@ -1040,21 +1067,21 @@ func (r *ReconcileVirtualMachineImport) makeV2VJobSpec(vmName types.NamespacedNa
 					OwnerReferences: nil,
 				},
 				Spec: v1.PodSpec{
-					Volumes: nil,
+					Volumes:       nil,
 					RestartPolicy: v1.RestartPolicyOnFailure,
 					Containers: []v1.Container{
 						{
-							Name:                     "virt-v2v",
-							Image:                    "busybox",
-							Args:                     []string{
+							Name:  "virt-v2v",
+							Image: "busybox",
+							Args: []string{
 								"/bin/sh",
 								"-c",
 								"date; echo $VM_NAME; sleep 30s; echo running virt-v2v",
 							},
-							WorkingDir:               "",
-							Ports:                    nil,
-							EnvFrom:                  nil,
-							Env:                      []v1.EnvVar{
+							WorkingDir: "",
+							Ports:      nil,
+							EnvFrom:    nil,
+							Env: []v1.EnvVar{
 								{
 									Name:      "VM_NAME",
 									Value:     vmName.Name,
