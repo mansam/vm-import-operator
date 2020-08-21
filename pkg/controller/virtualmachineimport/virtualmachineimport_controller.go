@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"os"
 	"strconv"
 	"strings"
@@ -393,6 +394,103 @@ func (r *ReconcileVirtualMachineImport) addWatchForImportPod(instance *v2vv1.Vir
 	)
 }
 
+func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider, instance *v2vv1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
+	// find the vmspec
+	vmSpec := &kubevirtv1.VirtualMachine{}
+	err := r.client.Get(context.TODO(), vmName, vmSpec)
+	if err != nil {
+		return false, err
+	}
+
+	configMap, err := r.findLibvirtDomainConfigMap(vmName)
+	if err != nil {
+		return false, err
+	}
+	if configMap == nil {
+		configMap, err = r.makeLibvirtDomainConfigMap(instance, vmSpec)
+	}
+
+	job, err := r.findGuestConversionJob(vmName)
+	if err != nil {
+		return false, err
+	}
+	// the job doesn't exist, so create it
+	if job == nil {
+		err = r.makeGuestConversionJob(instance, vmSpec, configMap)
+		if err != nil {
+			return false, err
+		}
+
+		processingCond := conditions.NewProcessingCondition(string(v2vv1.ConvertingGuest), "Running virt-v2v", corev1.ConditionTrue)
+		err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, processingCond)
+		if err != nil {
+			return false, err
+		}
+
+		// Update progress to converting guest:
+		if err = r.updateProgress(instance, progressConvertingGuest); err != nil {
+			return false, err
+		}
+	}
+
+	if job.Status.Active > 0 {
+		return false, nil
+	}
+
+	if job.Status.Failed > 0 {
+		err := r.endGuestConversionAsFailed(provider, instance, "virt-v2v job failed")
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	return job.Status.Succeeded > 0, nil
+}
+
+func (r *ReconcileVirtualMachineImport) findLibvirtDomainConfigMap(vmName types.NamespacedName) (*v1.ConfigMap, error) {
+	configMapList := &v1.ConfigMapList{}
+	matchingLabels := client.MatchingLabels(map[string]string{VMLabel: vmName.Name})
+	err := r.client.List(context.TODO(), configMapList, matchingLabels)
+	if err != nil {
+		return nil, err
+	}
+	if len(configMapList.Items) > 0 {
+		return &configMapList.Items[0], nil
+	}
+	return nil, nil
+}
+
+func (r *ReconcileVirtualMachineImport) makeLibvirtDomainConfigMap(instance *v2vv1.VirtualMachineImport, vmSpec *kubevirtv1.VirtualMachine) (*v1.ConfigMap, error) {
+	domain := r.generateLibvirtDomain(vmSpec)
+	domxml, err := xml.Marshal(domain)
+	if err != nil {
+		return nil, err
+	}
+	domainXMLConfigMap := &v1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: vmSpec.Name + "-",
+			Namespace:    vmSpec.Namespace,
+			Labels: map[string]string{
+				VMLabel: vmSpec.Name,
+			},
+		},
+		BinaryData: map[string][]byte{
+			"input.xml": domxml,
+		},
+	}
+	// Set VirtualMachineImport instance as the owner and controller
+	err = controllerutil.SetControllerReference(instance, domainXMLConfigMap, r.scheme)
+	if err != nil {
+		return nil, err
+	}
+	err = r.client.Create(context.TODO(), domainXMLConfigMap)
+	if err != nil {
+		return nil, err
+	}
+	return domainXMLConfigMap, nil
+}
+
 func (r *ReconcileVirtualMachineImport) generateLibvirtDomain(vmSpec *kubevirtv1.VirtualMachine) *libvirtxml.Domain {
 	libvirtDisks := make([]libvirtxml.DomainDisk, 0)
 	for i := range vmSpec.Spec.Template.Spec.Volumes {
@@ -445,105 +543,6 @@ func (r *ReconcileVirtualMachineImport) generateLibvirtDomain(vmSpec *kubevirtv1
 	}
 }
 
-func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider, instance *v2vv1.VirtualMachineImport, vmName types.NamespacedName) (bool, error) {
-	// find the vmspec
-	vmSpec := &kubevirtv1.VirtualMachine{}
-	err := r.client.Get(context.TODO(), vmName, vmSpec)
-	if err != nil {
-		return false, err
-	}
-
-	configMap, err := r.findLibvirtDomainConfigMap(vmName)
-	if err != nil {
-		return false, err
-	}
-	if configMap == nil {
-		domain := r.generateLibvirtDomain(vmSpec)
-		configMap, err = r.makeLibvirtDomainConfigMap(vmSpec, domain)
-	}
-
-	job, err := r.findGuestConversionJob(vmName)
-	if err != nil {
-		return false, err
-	}
-	// the job doesn't exist, so create it
-	// TODO: need to handle the case where the job doesn't exist because we're already done
-	if job == nil {
-		job = r.makeGuestConversionJobSpec(instance, vmSpec)
-		// Set VirtualMachineImport instance as the owner and controller
-		if err := controllerutil.SetControllerReference(instance, job, r.scheme); err != nil {
-			return false, err
-		}
-
-		err := r.client.Create(context.TODO(), job)
-		if err != nil {
-			return false, err
-		}
-
-		processingCond := conditions.NewProcessingCondition(string(v2vv1.ConvertingGuest), "Running virt-v2v", corev1.ConditionTrue)
-		err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, processingCond)
-		if err != nil {
-			return false, err
-		}
-
-		// Update progress to converting guest:
-		if err = r.updateProgress(instance, progressConvertingGuest); err != nil {
-			return false, err
-		}
-	}
-
-	if job.Status.Active > 0 {
-		return false, nil
-	}
-
-	if job.Status.Failed > 0 {
-		err := r.endGuestConversionAsFailed(provider, instance, "virt-v2v job failed")
-		if err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-
-	return job.Status.Succeeded > 0, nil
-}
-
-func (r *ReconcileVirtualMachineImport) findLibvirtDomainConfigMap(vmName types.NamespacedName) (*v1.ConfigMap, error) {
-	configMapList := &v1.ConfigMapList{}
-	matchingLabels := client.MatchingLabels(map[string]string{VMLabel: vmName.Name})
-	err := r.client.List(context.TODO(), configMapList, matchingLabels)
-	if err != nil {
-		return nil, err
-	}
-	if len(configMapList.Items) > 0 {
-		return &configMapList.Items[0], nil
-	}
-	return nil, nil
-}
-
-func (r *ReconcileVirtualMachineImport) makeLibvirtDomainConfigMap(vmSpec *kubevirtv1.VirtualMachine, domain *libvirtxml.Domain) (*v1.ConfigMap, error) {
-	domxml, err := xml.Marshal(domain)
-	if err != nil {
-		return nil, err
-	}
-	domainXMLConfigMap := &v1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: vmSpec.Name + "-",
-			Namespace:    vmSpec.Namespace,
-			Labels: map[string]string{
-				VMLabel: vmSpec.Name,
-			},
-		},
-		BinaryData: map[string][]byte{
-			"input.xml": domxml,
-		},
-	}
-	err = r.client.Create(context.TODO(), domainXMLConfigMap)
-	if err != nil {
-		return nil, err
-	}
-	return domainXMLConfigMap, nil
-}
-
 func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.NamespacedName) (*batchv1.Job, error) {
 	jobList := &batchv1.JobList{}
 	matchingLabels := client.MatchingLabels(map[string]string{VMLabel: vmName.Name})
@@ -557,7 +556,7 @@ func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.Name
 	return nil, nil
 }
 
-func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2vv1.VirtualMachineImport, vmSpec *kubevirtv1.VirtualMachine) *batchv1.Job {
+func (r *ReconcileVirtualMachineImport) makeGuestConversionJob(instance *v2vv1.VirtualMachineImport, vmSpec *kubevirtv1.VirtualMachine, libvirtDomainConfigMap *v1.ConfigMap) error {
 	completions := int32(1)
 	parallelism := int32(1)
 	backoffLimit := int32(0)
@@ -587,7 +586,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		VolumeSource: v1.VolumeSource{
 			ConfigMap: &v1.ConfigMapVolumeSource{
 				LocalObjectReference: v1.LocalObjectReference{
-					Name: vmSpec.Name,
+					Name: libvirtDomainConfigMap.Name,
 				},
 			},
 		},
@@ -597,7 +596,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		MountPath: "/mnt/v2v",
 	})
 
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Job",
 			APIVersion: "v1",
@@ -634,6 +633,19 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 		},
 		Status: batchv1.JobStatus{},
 	}
+
+	// Set VirtualMachineImport instance as the owner and controller
+	err := controllerutil.SetControllerReference(instance, job, r.scheme)
+	if err != nil {
+		return err
+	}
+
+	err = r.client.Create(context.TODO(), job)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
