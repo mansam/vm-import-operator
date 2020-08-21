@@ -470,7 +470,9 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 	}
 	err = r.client.Create(context.TODO(), &domainXMLConfigMap)
 	if err != nil {
-		return false, err
+		if !k8serrors.IsAlreadyExists(err) {
+			return false, err
+		}
 	}
 
 	job, err := r.findGuestConversionJob(vmName)
