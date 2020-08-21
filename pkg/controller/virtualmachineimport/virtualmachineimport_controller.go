@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/kubevirt/vm-import-operator/pkg/providers/vmware"
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"os"
 	"strconv"
 	"strings"
