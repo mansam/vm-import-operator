@@ -411,7 +411,7 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 			},
 			Source:       &libvirtxml.DomainDiskSource{
 				File:          &libvirtxml.DomainDiskSourceFile{
-					File:     fmt.Sprintf("/mnt/disks/disk%v", i),
+					File:     fmt.Sprintf("/mnt/disks/disk%v/disk.img", i),
 				},
 			},
 			Target:       &libvirtxml.DomainDiskTarget{
