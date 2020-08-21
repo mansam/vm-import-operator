@@ -594,7 +594,7 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJobSpec(instance *v2v
 					Containers: []v1.Container{
 						{
 							Name:  "virt-v2v",
-							Image: "quay.io/fdupont-redhat/kubevirt-vmio-virtv2v:fd_ubi_debug_overlays",
+							Image: "quay.io/fdupont-redhat/vm-import-v2v:virtv2v_fix_qcow2_identification",
 							ImagePullPolicy: v1.PullIfNotPresent,
 							VolumeMounts: volumeMounts,
 						},
