@@ -24,10 +24,6 @@ import (
 	"kubevirt.io/containerized-data-importer/pkg/common"
 )
 
-const (
-	blockdevFileName = "/usr/sbin/blockdev"
-)
-
 // CountingReader is a reader that keeps track of how much has been read
 type CountingReader struct {
 	Reader  io.ReadCloser
@@ -88,7 +84,7 @@ func (r *CountingReader) Close() error {
 
 // GetAvailableSpaceByVolumeMode calls another method based on the volumeMode parameter to get the amount of
 // available space at the path specified.
-func GetAvailableSpaceByVolumeMode(volumeMode v1.PersistentVolumeMode) (int64, error) {
+func GetAvailableSpaceByVolumeMode(volumeMode v1.PersistentVolumeMode) int64 {
 	if volumeMode == v1.PersistentVolumeBlock {
 		return GetAvailableSpaceBlock(common.WriteBlockPath)
 	}
@@ -96,40 +92,31 @@ func GetAvailableSpaceByVolumeMode(volumeMode v1.PersistentVolumeMode) (int64, e
 }
 
 // GetAvailableSpace gets the amount of available space at the path specified.
-func GetAvailableSpace(path string) (int64, error) {
+func GetAvailableSpace(path string) int64 {
 	var stat syscall.Statfs_t
 	err := syscall.Statfs(path, &stat)
 	if err != nil {
-		return int64(-1), err
+		return int64(-1)
 	}
-	return int64(stat.Bavail) * int64(stat.Bsize), nil
+	return int64(stat.Bavail) * int64(stat.Bsize)
 }
 
 // GetAvailableSpaceBlock gets the amount of available space at the block device path specified.
-func GetAvailableSpaceBlock(deviceName string) (int64, error) {
-	// Check if device exists.
-	info, err := os.Stat(deviceName)
-	if os.IsNotExist(err) {
-		return int64(-1), nil
-	}
-	if info.IsDir() {
-		return int64(-1), nil
-	}
-	// Device exists and is not a directory attempt to get size
-	cmd := exec.Command(blockdevFileName, "--getsize64", deviceName)
+func GetAvailableSpaceBlock(deviceName string) int64 {
+	cmd := exec.Command("/usr/sbin/blockdev", "--getsize64", deviceName)
 	var out bytes.Buffer
-	var errBuf bytes.Buffer
+	var stderr bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	err = cmd.Run()
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
-		return int64(-1), errors.Errorf("%v, %s", err, errBuf.String())
+		return int64(-1)
 	}
 	i, err := strconv.ParseInt(strings.TrimSpace(out.String()), 10, 64)
 	if err != nil {
-		return int64(-1), err
+		return int64(-1)
 	}
-	return i, nil
+	return i
 }
 
 // MinQuantity calculates the minimum of two quantities.
@@ -143,16 +130,12 @@ func MinQuantity(availableSpace, imageSize *resource.Quantity) resource.Quantity
 // StreamDataToFile provides a function to stream the specified io.Reader to the specified local file
 func StreamDataToFile(r io.Reader, fileName string) error {
 	var outFile *os.File
-	blockSize, err := GetAvailableSpaceBlock(fileName)
-	if err != nil {
-		return errors.Wrapf(err, "error determining if block device exists")
-	}
-	if blockSize >= 0 {
-		// Block device found and size determined.
-		outFile, err = os.OpenFile(fileName, os.O_EXCL|os.O_WRONLY, os.ModePerm)
-	} else {
+	var err error
+	if GetAvailableSpaceBlock(fileName) < 0 {
 		// Attempt to create the file with name filePath.  If it exists, fail.
 		outFile, err = os.OpenFile(fileName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.ModePerm)
+	} else {
+		outFile, err = os.OpenFile(fileName, os.O_EXCL|os.O_WRONLY, os.ModePerm)
 	}
 	if err != nil {
 		return errors.Wrapf(err, "could not open file %q", fileName)

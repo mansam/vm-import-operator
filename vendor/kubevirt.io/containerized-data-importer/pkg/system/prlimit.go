@@ -108,17 +108,8 @@ func processScanner(scanner *bufio.Scanner, buf *bytes.Buffer, done chan bool, c
 
 // ExecWithLimits executes a command with process limits
 func ExecWithLimits(limits *ProcessLimitValues, callback func(string), command string, args ...string) ([]byte, error) {
-	return executeWithLimits(limits, callback, true, command, args...)
-}
-
-// ExecWithLimitsSilently executes a command with process limits and do not print output on error
-func ExecWithLimitsSilently(limits *ProcessLimitValues, callback func(string), command string, args ...string) ([]byte, error) {
-	return executeWithLimits(limits, callback, false, command, args...)
-}
-
-func executeWithLimits(limits *ProcessLimitValues, callback func(string), logErr bool, command string, args ...string) ([]byte, error) {
 	// Args can potentially contain sensitive information, make sure NOT to write args to the logs.
-	var buf, errBuf bytes.Buffer
+	var buf bytes.Buffer
 	var cmd *exec.Cmd
 
 	stdoutDone := make(chan bool)
@@ -153,7 +144,7 @@ func executeWithLimits(limits *ProcessLimitValues, callback func(string), logErr
 	defer cmd.Process.Kill()
 
 	go processScanner(scanner, &buf, stdoutDone, callback)
-	go processScanner(errScanner, &errBuf, stderrDone, callback)
+	go processScanner(errScanner, &buf, stderrDone, callback)
 
 	if limits != nil && limits.AddressSpaceLimit > 0 {
 		klog.V(3).Infof("Setting Address space limit to %d\n", limits.AddressSpaceLimit)
@@ -170,12 +161,9 @@ func executeWithLimits(limits *ProcessLimitValues, callback func(string), logErr
 
 	output := buf.Bytes()
 	if err != nil {
-		if logErr {
-			klog.Errorf("%s failed output is:\n", command)
-			klog.Errorf("%s\n", string(output))
-			klog.Errorf("%s\n", string(errBuf.Bytes()))
-		}
-		return errBuf.Bytes(), errors.Wrapf(err, "%s execution failed", command)
+		klog.Errorf("%s failed output is:\n", command)
+		klog.Errorf("%s\n", string(output))
+		return output, errors.Wrapf(err, "%s execution failed", command)
 	}
 	return output, nil
 }

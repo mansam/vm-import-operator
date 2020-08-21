@@ -1280,13 +1280,9 @@ kubevirt.io/containerized-data-importer/pkg/system
 kubevirt.io/containerized-data-importer/pkg/util
 kubevirt.io/containerized-data-importer/tests/utils
 kubevirt.io/containerized-data-importer/tools/util
-<<<<<<< HEAD
-# sigs.k8s.io/controller-runtime v0.5.9
-=======
 # libvirt.org/libvirt-go-xml v6.6.0+incompatible
 libvirt.org/libvirt-go-xml
-# sigs.k8s.io/controller-runtime v0.4.0
->>>>>>> 651336a... more wip configmap stuff
+# sigs.k8s.io/controller-runtime v0.5.9
 sigs.k8s.io/controller-runtime/pkg/cache
 sigs.k8s.io/controller-runtime/pkg/cache/internal
 sigs.k8s.io/controller-runtime/pkg/client

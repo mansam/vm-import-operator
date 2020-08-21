@@ -14,8 +14,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"kubevirt.io/containerized-data-importer/pkg/common"
-	"kubevirt.io/containerized-data-importer/pkg/util/naming"
 )
 
 const (
@@ -24,31 +22,12 @@ const (
 
 	podCreateTime = defaultPollPeriod
 	podDeleteTime = defaultPollPeriod
-
-	//VerifierPodName is the name of the verifier pod.
-	VerifierPodName = "verifier"
 )
-
-// CreateVerifierPodWithPVC creates a Pod called verifier, with the passed in PVC mounted under /pvc. You can then use the executor utilities to
-// run commands against the PVC through this Pod.
-func CreateVerifierPodWithPVC(clientSet *kubernetes.Clientset, namespace string, pvc *k8sv1.PersistentVolumeClaim) (*k8sv1.Pod, error) {
-	return CreateExecutorPodWithPVC(clientSet, VerifierPodName, namespace, pvc)
-}
-
-// DeleteVerifierPod deletes the verifier pod
-func DeleteVerifierPod(clientSet *kubernetes.Clientset, namespace string) error {
-	return DeletePodByName(clientSet, VerifierPodName, namespace)
-}
 
 // CreateExecutorPodWithPVC creates a Pod with the passed in PVC mounted under /pvc. You can then use the executor utilities to
 // run commands against the PVC through this Pod.
 func CreateExecutorPodWithPVC(clientSet *kubernetes.Clientset, podName, namespace string, pvc *k8sv1.PersistentVolumeClaim) (*k8sv1.Pod, error) {
 	return CreatePod(clientSet, namespace, newExecutorPodWithPVC(podName, pvc))
-}
-
-// CreateNoopPodWithPVC creates a short living pod, that might be used to force bind a pvc
-func CreateNoopPodWithPVC(clientSet *kubernetes.Clientset, podName, namespace string, pvc *k8sv1.PersistentVolumeClaim) (*k8sv1.Pod, error) {
-	return CreatePod(clientSet, namespace, NewPodWithPVC(podName, "echo I am vm doppleganger pod;", pvc))
 }
 
 // CreateExecutorPodWithPVCSpecificNode creates a Pod on a specific node with the passed in PVC mounted under /pvc. You can then use the executor utilities to
@@ -63,21 +42,22 @@ func CreateExecutorPodWithPVCSpecificNode(clientSet *kubernetes.Clientset, podNa
 
 // CreatePod calls the Kubernetes API to create a Pod
 func CreatePod(clientSet *kubernetes.Clientset, namespace string, podDef *k8sv1.Pod) (*k8sv1.Pod, error) {
+	var pod *k8sv1.Pod
 	err := wait.PollImmediate(2*time.Second, podCreateTime, func() (bool, error) {
 		var err error
-		_, err = clientSet.CoreV1().Pods(namespace).Create(podDef)
+		pod, err = clientSet.CoreV1().Pods(namespace).Create(podDef)
 		if err != nil {
 			return false, err
 		}
 		return true, nil
 	})
-	return podDef, err
+	return pod, err
 }
 
-// DeletePodByName deletes the pod based on the passed in name from the passed in Namespace
-func DeletePodByName(clientSet *kubernetes.Clientset, podName, namespace string) error {
+// DeletePod deletes the passed in Pod from the passed in Namespace
+func DeletePod(clientSet *kubernetes.Clientset, pod *k8sv1.Pod, namespace string) error {
 	return wait.PollImmediate(2*time.Second, podDeleteTime, func() (bool, error) {
-		err := clientSet.CoreV1().Pods(namespace).Delete(podName, &metav1.DeleteOptions{})
+		err := clientSet.CoreV1().Pods(namespace).Delete(pod.GetName(), &metav1.DeleteOptions{})
 		if err != nil {
 			return false, nil
 		}
@@ -85,19 +65,12 @@ func DeletePodByName(clientSet *kubernetes.Clientset, podName, namespace string)
 	})
 }
 
-// DeletePod deletes the passed in Pod from the passed in Namespace
-func DeletePod(clientSet *kubernetes.Clientset, pod *k8sv1.Pod, namespace string) error {
-	return DeletePodByName(clientSet, pod.Name, namespace)
-}
-
 // NewPodWithPVC creates a new pod that mounts the given PVC
 func NewPodWithPVC(podName, cmd string, pvc *k8sv1.PersistentVolumeClaim) *k8sv1.Pod {
-	volumeName := naming.GetLabelNameFromResourceName(pvc.GetName())
-	fsGroup := common.QemuSubGid
 	pod := &k8sv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName,
-			Annotations: map[string]string{
+			Labels: map[string]string{
 				"cdi.kubevirt.io/testing": podName,
 			},
 		},
@@ -120,7 +93,7 @@ func NewPodWithPVC(podName, cmd string, pvc *k8sv1.PersistentVolumeClaim) *k8sv1
 			},
 			Volumes: []k8sv1.Volume{
 				{
-					Name: volumeName,
+					Name: pvc.GetName(),
 					VolumeSource: k8sv1.VolumeSource{
 						PersistentVolumeClaim: &k8sv1.PersistentVolumeClaimVolumeSource{
 							ClaimName: pvc.GetName(),
@@ -128,25 +101,22 @@ func NewPodWithPVC(podName, cmd string, pvc *k8sv1.PersistentVolumeClaim) *k8sv1
 					},
 				},
 			},
-			SecurityContext: &k8sv1.PodSecurityContext{
-				FSGroup: &fsGroup,
-			},
 		},
 	}
 
 	volumeMode := pvc.Spec.VolumeMode
 	if volumeMode != nil && *volumeMode == v1.PersistentVolumeBlock {
-		pod.Spec.Containers[0].VolumeDevices = addVolumeDevices(pvc, volumeName)
+		pod.Spec.Containers[0].VolumeDevices = addVolumeDevices(pvc)
 	} else {
-		pod.Spec.Containers[0].VolumeMounts = addVolumeMounts(pvc, volumeName)
+		pod.Spec.Containers[0].VolumeMounts = addVolumeMounts(pvc)
 	}
 	return pod
 }
 
-func addVolumeDevices(pvc *k8sv1.PersistentVolumeClaim, volumeName string) []v1.VolumeDevice {
+func addVolumeDevices(pvc *k8sv1.PersistentVolumeClaim) []v1.VolumeDevice {
 	volumeDevices := []v1.VolumeDevice{
 		{
-			Name:       volumeName,
+			Name:       pvc.GetName(),
 			DevicePath: DefaultPvcMountPath,
 		},
 	}
@@ -154,10 +124,10 @@ func addVolumeDevices(pvc *k8sv1.PersistentVolumeClaim, volumeName string) []v1.
 }
 
 // this is being called for pods using PV with filesystem volume mode
-func addVolumeMounts(pvc *k8sv1.PersistentVolumeClaim, volumeName string) []v1.VolumeMount {
+func addVolumeMounts(pvc *k8sv1.PersistentVolumeClaim) []v1.VolumeMount {
 	volumeMounts := []v1.VolumeMount{
 		{
-			Name:      volumeName,
+			Name:      pvc.GetName(),
 			MountPath: DefaultPvcMountPath,
 		},
 	}
@@ -204,7 +174,7 @@ func findPodByCompFunc(clientSet *kubernetes.Clientset, namespace, prefix, label
 }
 
 func newExecutorPodWithPVC(podName string, pvc *k8sv1.PersistentVolumeClaim) *k8sv1.Pod {
-	return NewPodWithPVC(podName, "while true; do echo hello; sleep 2;done", pvc)
+	return NewPodWithPVC(podName, "sleep 30; echo I am an executor pod;", pvc)
 }
 
 // WaitTimeoutForPodReady waits for the given pod to be created and ready
@@ -236,7 +206,7 @@ func podStatus(clientSet *kubernetes.Clientset, podName, namespace string, statu
 			}
 			return false, err
 		}
-		fmt.Fprintf(ginkgo.GinkgoWriter, "INFO: Checking POD %s phase: %s\n", podName, string(pod.Status.Phase))
+		fmt.Fprintf(ginkgo.GinkgoWriter, "INFO: Checking POD phase: %s\n", string(pod.Status.Phase))
 		switch pod.Status.Phase {
 		case status:
 			return true, nil
