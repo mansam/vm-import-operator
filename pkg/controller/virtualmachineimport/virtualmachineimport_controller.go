@@ -479,8 +479,7 @@ func (r *ReconcileVirtualMachineImport) makeLibvirtDomainConfigMap(instance *v2v
 			"input.xml": domxml,
 		},
 	}
-	// Set VirtualMachineImport instance as the owner and controller
-	err = controllerutil.SetControllerReference(instance, domainXMLConfigMap, r.scheme)
+	err = controllerutil.SetOwnerReference(instance, domainXMLConfigMap, r.scheme)
 	if err != nil {
 		return nil, err
 	}
