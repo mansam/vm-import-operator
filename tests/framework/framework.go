@@ -35,10 +35,13 @@ const (
 	nsDeleteTime = 5 * time.Minute
 	//NsPrefixLabel provides a virtual machine import prefix label to identify the test namespace
 	NsPrefixLabel = "vm-import-e2e"
+	ProviderOvirt = "ovirt"
+	ProviderVmware = "vmware"
 )
 
 // run-time flags
 var (
+	provider                 *string
 	kubectlPath              *string
 	kubeConfig               *string
 	master                   *string
@@ -88,12 +91,15 @@ type Framework struct {
 
 	// ImageioInstallNamespace namespace where ImageIO and FakeOvirt are installed
 	ImageioInstallNamespace string
+
+	Provider string
 }
 
 // initialize run-time flags
 func init() {
 	// Make sure that go test flags are registered when the framework is created
 	testing.Init()
+	provider = flag.String("provider", "", "The provider to test (ovirt/vmware)")
 	kubectlPath = flag.String("kubectl-path", "kubectl", "The path to the kubectl binary")
 	kubeConfig = flag.String("kubeconfig", "/var/run/kubernetes/admin.kubeconfig", "The absolute path to the kubeconfig file")
 	master = flag.String("master", "", "master url:port")
@@ -133,14 +139,18 @@ func NewFramework(prefix string) (*Framework, error) {
 	f.KubeVirtInstallNamespace = *kubeVirtInstallNamespace
 	f.DefaultStorageClass = *defaultStorageClass
 	f.NfsStorageClass = *nfsStorageClass
-	f.ImageioInstallNamespace = *imageioInstallNamespace
-	ovirtClient := sclient.NewInsecureFakeOvirtClient("https://localhost:12346")
-	f.OvirtStubbingClient = &ovirtClient
-	content, err := ioutil.ReadFile(*ovirtCAPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "ERROR, cannot read oVirt CA file")
+	f.Provider = *provider
+
+	if *provider == ProviderOvirt {
+		f.ImageioInstallNamespace = *imageioInstallNamespace
+		ovirtClient := sclient.NewInsecureFakeOvirtClient("https://localhost:12346")
+		f.OvirtStubbingClient = &ovirtClient
+		content, err := ioutil.ReadFile(*ovirtCAPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "ERROR, cannot read oVirt CA file")
+		}
+		f.OVirtCA = string(content)
 	}
-	f.OVirtCA = string(content)
 
 	restConfig, err := f.LoadConfig()
 	if err != nil {
@@ -188,8 +198,10 @@ func (f *Framework) BeforeEach() {
 	f.Namespace = ns
 	f.AddNamespaceToDelete(ns)
 
-	err = f.OvirtStubbingClient.Reset("static-sso,static-namespace,static-transfers")
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	if f.Provider == ProviderOvirt {
+		err = f.OvirtStubbingClient.Reset("static-sso,static-namespace,static-transfers")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
 }
 
 // AfterEach provides a set of operations to run after each test

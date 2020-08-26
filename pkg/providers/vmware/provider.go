@@ -2,6 +2,7 @@ package vmware
 
 import (
 	"fmt"
+	"github.com/kubevirt/vm-import-operator/pkg/conditions"
 	"github.com/kubevirt/vm-import-operator/pkg/configmaps"
 	oapiv1 "github.com/openshift/api/template/v1"
 	tempclient "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
@@ -288,7 +289,9 @@ func (r *VmwareProvider) TestConnection() error {
 // Validate checks whether the source VM and resource mapping is valid.
 func (r *VmwareProvider) Validate() ([]v1beta1.VirtualMachineImportCondition, error) {
 	// TODO: implement vmware rule validation
-	return nil, nil
+	conds := make([]v1beta1.VirtualMachineImportCondition, 0)
+	conds = append(conds, conditions.NewCondition(v1beta1.Valid, string(v1beta1.ValidationCompleted), "Validation completed successfully", corev1.ConditionTrue))
+	return conds, nil
 }
 
 // Close is a no-op which is present in order to satisfy the Provider interface.

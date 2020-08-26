@@ -377,16 +377,18 @@ func (r *VmwareMapper) MapVM(targetVmName *string, vmSpec *kubevirtv1.VirtualMac
 	// Map clock
 	vmSpec.Spec.Template.Spec.Domain.Clock = r.mapClock(r.hostProperties)
 
-	// Map networks
-	vmSpec.Spec.Template.Spec.Networks, err = r.mapNetworks()
-	if err != nil {
-		return nil, err
-	}
+	if r.mappings != nil && r.mappings.NetworkMappings != nil {
+		// Map networks
+		vmSpec.Spec.Template.Spec.Networks, err = r.mapNetworks()
+		if err != nil {
+			return nil, err
+		}
 
-	networkToType := r.mapNetworksToTypes(vmSpec.Spec.Template.Spec.Networks)
-	vmSpec.Spec.Template.Spec.Domain.Devices.Interfaces, err = r.mapNetworkInterfaces(networkToType)
-	if err != nil {
-		return nil, err
+		networkToType := r.mapNetworksToTypes(vmSpec.Spec.Template.Spec.Networks)
+		vmSpec.Spec.Template.Spec.Domain.Devices.Interfaces, err = r.mapNetworkInterfaces(networkToType)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	os, _ := r.osFinder.FindOperatingSystem(r.vmProperties)
@@ -458,12 +460,12 @@ func (r *VmwareMapper) mapInputDevice(os string) []kubevirtv1.Input {
 }
 
 func (r *VmwareMapper) mapNetworks() ([]kubevirtv1.Network, error) {
+	var kubevirtNetworks []kubevirtv1.Network
 	err := r.buildDevices()
 	if err != nil {
-		return nil, err
+		return kubevirtNetworks, err
 	}
 
-	var kubevirtNetworks []kubevirtv1.Network
 	for _, nic := range *r.nics {
 		kubevirtNet := kubevirtv1.Network{}
 		for _, mapping := range *r.mappings.NetworkMappings {

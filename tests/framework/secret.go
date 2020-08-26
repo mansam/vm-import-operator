@@ -47,3 +47,28 @@ func (f *Framework) CreateOvirtSecretInNamespace(environment ovirtenv.Environmen
 	}
 	return *created, nil
 }
+
+func (f *Framework) CreateVmwareSecretInNamespace(namespace string) (corev1.Secret, error) {
+	secretData := make(map[string]string)
+	secretData["apiUrl"] = "https://vcsim.cdi:8989/sdk"
+	secretData["username"] = "user"
+	secretData["password"] = "pass"
+	secretData["thumbprint"] = "2C:11:ED:D7:13:87:7D:B5:74:18:B8:1C:42:C2:56:1F:0D:B9:5B:B9"
+
+	marshalled, err := yaml.Marshal(secretData)
+	if err != nil {
+		return corev1.Secret{}, err
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: f.NsPrefix,
+			Namespace:    namespace,
+		},
+		StringData: map[string]string{"vmware": string(marshalled)},
+	}
+	created, err := f.K8sClient.CoreV1().Secrets(namespace).Create(&secret)
+	if err != nil {
+		return corev1.Secret{}, nil
+	}
+	return *created, nil
+}

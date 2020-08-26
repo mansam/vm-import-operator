@@ -415,7 +415,7 @@ func (r *ReconcileVirtualMachineImport) convertGuest(provider provider.Provider,
 	}
 	// the job doesn't exist, so create it
 	if job == nil {
-		err = r.makeGuestConversionJob(instance, vmSpec, configMap)
+		job, err = r.makeGuestConversionJob(instance, vmSpec, configMap)
 		if err != nil {
 			return false, err
 		}
@@ -554,7 +554,7 @@ func (r *ReconcileVirtualMachineImport) findGuestConversionJob(vmName types.Name
 	return nil, nil
 }
 
-func (r *ReconcileVirtualMachineImport) makeGuestConversionJob(instance *v2vv1.VirtualMachineImport, vmSpec *kubevirtv1.VirtualMachine, libvirtDomainConfigMap *v1.ConfigMap) error {
+func (r *ReconcileVirtualMachineImport) makeGuestConversionJob(instance *v2vv1.VirtualMachineImport, vmSpec *kubevirtv1.VirtualMachine, libvirtDomainConfigMap *v1.ConfigMap) (*batchv1.Job, error) {
 	completions := int32(1)
 	parallelism := int32(1)
 	backoffLimit := int32(0)
@@ -635,15 +635,15 @@ func (r *ReconcileVirtualMachineImport) makeGuestConversionJob(instance *v2vv1.V
 	// Set VirtualMachineImport instance as the owner and controller
 	err := controllerutil.SetControllerReference(instance, job, r.scheme)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = r.client.Create(context.TODO(), job)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return job, nil
 }
 
 func (r *ReconcileVirtualMachineImport) importDisks(provider provider.Provider, instance *v2vv1.VirtualMachineImport, mapper provider.Mapper, vmName types.NamespacedName) (bool, error) {
