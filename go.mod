@@ -13,6 +13,7 @@ require (
 	github.com/go-openapi/spec v0.19.4
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v0.0.0-20191119172530-79f836b90111
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/konveyor/controller v0.1.0
 	github.com/machacekondra/fakeovirt v0.0.0-20200617055337-1afdfa789aab
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1

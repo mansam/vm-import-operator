@@ -423,6 +423,9 @@ github.com/klauspost/compress/zstd/internal/xxhash
 github.com/klauspost/pgzip
 # github.com/konsorten/go-windows-terminal-sequences v1.0.3
 github.com/konsorten/go-windows-terminal-sequences
+# github.com/konveyor/controller v0.1.0
+github.com/konveyor/controller/pkg/error
+github.com/konveyor/controller/pkg/itinerary
 # github.com/lib/pq v1.2.0
 github.com/lib/pq
 github.com/lib/pq/oid
