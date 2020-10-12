@@ -113,6 +113,12 @@ type VirtualMachineImportStatus struct {
 
 	// +optional
 	DataVolumes []DataVolumeItem `json:"dataVolumes,omitempty"`
+
+	// +optional
+	Itinerary string `json:"itinerary"`
+
+	// +optional
+	Phase string `json:"phase"`
 }
 
 // VirtualMachineImportConditionType defines the condition of VM import

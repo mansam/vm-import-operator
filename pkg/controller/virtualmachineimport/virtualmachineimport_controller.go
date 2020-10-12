@@ -209,18 +209,60 @@ type ReconcileVirtualMachineImport struct {
 	apiReader              client.Reader
 }
 
+
+func (r *ReconcileVirtualMachineImport) importVM(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (time.Duration, error) {
+
+	mapper, err := provider.CreateMapper()
+	if err != nil {
+		return FastReQ, err
+	}
+
+	task := Task{
+		Log: log,
+		Client: r.client,
+		Scheme: r.scheme,
+		Recorder: r.recorder,
+		Owner: instance,
+		Provider: provider,
+		Mapper: mapper,
+		Phase: instance.Status.Phase,
+	}
+
+	err = task.Run()
+	if err != nil {
+		task.fail(ImportFailed, []string{err.Error()})
+		return task.Requeue, nil
+	}
+
+	instance.Status.Phase = task.Phase
+	instance.Status.Itinerary = task.Itinerary.Name
+	if task.Phase == Completed {
+		// ascertain whether the import passed or failed and set an appropriate status
+		if !hasBlockerCondition(instance.Status.Conditions) {
+			succeeded := conditions.NewSucceededCondition(string(v2vv1.VirtualMachineReady), "Virtual machine ready", corev1.ConditionTrue)
+			err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, succeeded)
+			if err != nil {
+				return task.Requeue, nil
+			}
+		}
+	}
+
+	return task.Requeue, nil
+}
+
 // Reconcile reads that state of the cluster for a VirtualMachineImport object and makes changes based on the state read
 // and what is in the VirtualMachineImport.Spec
 // Note:
 // The Controller will requeue the Request to be processed again if the returned error is non-nil or
 // Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
 func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	var err error
 	reqLogger := log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
 	reqLogger.Info("Reconciling VirtualMachineImport")
 
 	// Fetch the VirtualMachineImport instance
 	instance := &v2vv1.VirtualMachineImport{}
-	err := r.client.Get(context.TODO(), request.NamespacedName, instance)
+	err = r.client.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
@@ -229,158 +271,209 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 			return reconcile.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true}, err
 	}
 
-	// Add finalizer to handle cancelled import
-	if !r.vmImportInProgress(instance) {
-		err := utils.AddFinalizer(instance, utils.CancelledImportFinalizer, r.client)
+	defer func() {
+		if err == nil || k8serrors.IsConflict(err) {
+			return
+		}
+		// instance.Status.SetReconcileFailed(err)
+		err := r.client.Update(context.TODO(), instance)
 		if err != nil {
-			return reconcile.Result{}, err
+			// log the error
+			return
 		}
-	}
+	}()
 
-	// Handle deleted import
-	if instance.DeletionTimestamp != nil {
-
-		// We know that additional finalizers after this point are created when VM import is in progress
-		// Therefore, if one of them fails and we return to Reconcile again ==> the code above will not add cancel finalizer again
-		// Finalizers that do not rely on import state should be handled here
-
-		// Cancelled import finalizer
-		if utils.HasFinalizer(instance, utils.CancelledImportFinalizer) {
-			err := utils.RemoveFinalizer(instance, utils.CancelledImportFinalizer, r.client)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-
-			metrics.ImportCounter.IncCancelled()
-		}
-
-		// If no more finalizers then return so resource can be deleted
-		if len(instance.GetFinalizers()) == 0 {
-			return reconcile.Result{}, nil
-		}
-	}
-
-	// Init provider:
-	provider, err := r.createProvider(instance)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	message, err := r.initProvider(instance, provider)
-	if err != nil {
-		if r.vmImportInProgress(instance) {
-			return reconcile.Result{}, err
-		}
-		// fail new request and don't requeue it if the provider couldn't be initialized properly
-		err = r.failNewImportProcess(instance, message, err)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-		return reconcile.Result{}, nil
-	}
-	defer provider.Close()
-
-	if instance.DeletionTimestamp != nil && utils.HasFinalizer(instance, utils.RestoreVMStateFinalizer) {
-		err := r.finalize(instance, provider)
-		if err != nil {
-			// requeue if locked
-			return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
-		}
+	if instance.Status.Phase == Completed {
 		return reconcile.Result{}, nil
 	}
 
-	// Exit if we should not run reconcile:
-	if !shouldReconcile(instance) {
-		reqLogger.Info("Not running reconcile")
-		return reconcile.Result{}, nil
-	}
+	requeueAfter := time.Duration(0) // not re-queued
 
-	// fetch source vm
-	err = r.fetchVM(instance, provider)
+	prov, err := r.createProvider(instance)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true}, nil
 	}
-
-	// Validate if it's needed at this stage of processing
-	valid, err := r.validate(instance, provider)
+	_, err = r.validateProvider(instance, prov)
 	if err != nil {
-		return reconcile.Result{}, err
-	}
-	if !valid {
-		return reconcile.Result{RequeueAfter: requeueAfterValidationFailureTime}, nil
+		return reconcile.Result{Requeue: true}, nil
 	}
 
-	// Stop the VM
-	if err = provider.StopVM(instance, r.client); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Create mapper:
-	mapper, err := provider.CreateMapper()
+	err = r.validate(instance, prov)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true}, nil
 	}
 
-	vmName := types.NamespacedName{Name: instance.Status.TargetVMName, Namespace: request.Namespace}
-	if instance.Status.TargetVMName == "" {
-		newName, err := r.createVM(provider, instance, mapper)
+	if blocked := hasBlockerCondition(instance.Status.Conditions); !blocked {
+		requeueAfter, err = r.importVM(instance, prov)
 		if err != nil {
-			return reconcile.Result{}, err
-		}
-		vmName.Name = newName
-		// Emit event we are starting the import process:
-		r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportScheduled, "Import of Virtual Machine %s/%s started", vmName.Namespace, vmName.Name)
-	}
-
-	if shouldImportDisks(instance) {
-		done, err := r.importDisks(provider, instance, mapper, vmName)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		if !done {
-			return reconcile.Result{}, nil
+			return reconcile.Result{Requeue: true}, nil
 		}
 	}
 
-	if shouldConvertGuest(provider, instance) {
-		done, err := r.convertGuest(provider, instance, vmName)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		if !done {
-			return reconcile.Result{}, nil
-		}
+	//instance.MarkReconciled()
+	err = r.client.Update(context.TODO(), instance)
+	if err != nil {
+		return reconcile.Result{Requeue: true}, nil
 	}
 
-	if !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1.VirtualMachineReady, v2vv1.VirtualMachineRunning) {
-		if err := r.updateConditionsAfterSuccess(instance, "Virtual machine disks import done", v2vv1.VirtualMachineReady); err != nil {
-			return reconcile.Result{}, err
-		}
-	}
-
-	if shouldStartVM(instance) {
-		if err = r.startVM(provider, instance, vmName); err != nil {
-			return reconcile.Result{}, err
-		}
-	} else {
-		// Update progress if all disks import done:
-		if err := r.updateProgress(instance, progressDone); err != nil {
-			return reconcile.Result{}, err
-		}
-		if err := r.afterSuccess(vmName, provider, instance); err != nil {
-			return reconcile.Result{}, err
-		}
-
-		// Emit event vm is successfully imported
-		r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s import successful", vmName.Namespace, vmName.Name)
+	if requeueAfter > 0 {
+		return reconcile.Result{RequeueAfter: requeueAfter}, nil
 	}
 
 	return reconcile.Result{}, nil
+
+	// Add finalizer to handle cancelled import
+	//if !r.vmImportInProgress(instance) {
+	//	err := utils.AddFinalizer(instance, utils.CancelledImportFinalizer, r.client)
+	//	if err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//}
+	//
+	//// Handle deleted import
+	//if instance.DeletionTimestamp != nil {
+	//
+	//	// We know that additional finalizers after this point are created when VM import is in progress
+	//	// Therefore, if one of them fails and we return to Reconcile again ==> the code above will not add cancel finalizer again
+	//	// Finalizers that do not rely on import state should be handled here
+	//
+	//	// Cancelled import finalizer
+	//	if utils.HasFinalizer(instance, utils.CancelledImportFinalizer) {
+	//		err := utils.RemoveFinalizer(instance, utils.CancelledImportFinalizer, r.client)
+	//		if err != nil {
+	//			return reconcile.Result{}, err
+	//		}
+	//
+	//		metrics.ImportCounter.IncCancelled()
+	//	}
+	//
+	//	// If no more finalizers then return so resource can be deleted
+	//	if len(instance.GetFinalizers()) == 0 {
+	//		return reconcile.Result{}, nil
+	//	}
+	//}
+	//
+	//// Init provider:
+	//provider, err := r.createProvider(instance)
+	//if err != nil {
+	//	return reconcile.Result{}, err
+	//}
+	//
+	//message, err := r.initProvider(instance, provider)
+	//if err != nil {
+	//	if r.vmImportInProgress(instance) {
+	//		return reconcile.Result{}, err
+	//	}
+	//	// fail new request and don't requeue it if the provider couldn't be initialized properly
+	//	err = r.failNewImportProcess(instance, message, err)
+	//	if err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//	return reconcile.Result{}, nil
+	//}
+	//defer provider.Close()
+	//
+	//if instance.DeletionTimestamp != nil && utils.HasFinalizer(instance, utils.RestoreVMStateFinalizer) {
+	//	err := r.finalize(instance, provider)
+	//	if err != nil {
+	//		// requeue if locked
+	//		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
+	//	}
+	//	return reconcile.Result{}, nil
+	//}
+	//
+	//// Exit if we should not run reconcile:
+	//if !shouldReconcile(instance) {
+	//	reqLogger.Info("Not running reconcile")
+	//	return reconcile.Result{}, nil
+	//}
+	//
+	//// fetch source vm
+	//err = r.fetchVM(instance, provider)
+	//if err != nil {
+	//	return reconcile.Result{}, err
+	//}
+	//
+	//// Validate if it's needed at this stage of processing
+	//valid, err := r.validate(instance, provider)
+	//if err != nil {
+	//	return reconcile.Result{}, err
+	//}
+	//if !valid {
+	//	return reconcile.Result{RequeueAfter: requeueAfterValidationFailureTime}, nil
+	//}
+	//
+	//// Stop the VM
+	//if err = provider.StopVM(instance, r.client); err != nil {
+	//	return reconcile.Result{}, err
+	//}
+	//
+	//// Create mapper:
+	//mapper, err := provider.CreateMapper()
+	//if err != nil {
+	//	return reconcile.Result{}, err
+	//}
+	//
+	//vmName := types.NamespacedName{Name: instance.Status.TargetVMName, Namespace: request.Namespace}
+	//if instance.Status.TargetVMName == "" {
+	//	newName, err := r.createVM(provider, instance, mapper)
+	//	if err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//	vmName.Name = newName
+	//	// Emit event we are starting the import process:
+	//	r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportScheduled, "Import of Virtual Machine %s/%s started", vmName.Namespace, vmName.Name)
+	//}
+	//
+	//if shouldImportDisks(instance) {
+	//	done, err := r.importDisks(provider, instance, mapper, vmName)
+	//	if err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//
+	//	if !done {
+	//		return reconcile.Result{}, nil
+	//	}
+	//}
+	//
+	//if shouldConvertGuest(provider, instance) {
+	//	done, err := r.convertGuest(provider, instance, vmName)
+	//	if err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//
+	//	if !done {
+	//		return reconcile.Result{}, nil
+	//	}
+	//}
+	//
+	//if !conditions.HasSucceededConditionOfReason(instance.Status.Conditions, v2vv1.VirtualMachineReady, v2vv1.VirtualMachineRunning) {
+	//	if err := r.updateConditionsAfterSuccess(instance, "Virtual machine disks import done", v2vv1.VirtualMachineReady); err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//}
+	//
+	//if shouldStartVM(instance) {
+	//	if err = r.startVM(provider, instance, vmName); err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//} else {
+	//	// Update progress if all disks import done:
+	//	if err := r.updateProgress(instance, progressDone); err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//	if err := r.afterSuccess(vmName, provider, instance); err != nil {
+	//		return reconcile.Result{}, err
+	//	}
+	//
+	//	// Emit event vm is successfully imported
+	//	r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportSucceeded, "Virtual Machine %s/%s import successful", vmName.Namespace, vmName.Name)
+	//}
+	//
+	//return reconcile.Result{}, nil
 }
 
 func (r *ReconcileVirtualMachineImport) finalize(instance *v2vv1.VirtualMachineImport, provider provider.Provider) error {
@@ -1199,21 +1292,17 @@ func foldErrors(errs []error, prefix string, vmiName types.NamespacedName) error
 	return fmt.Errorf("%s clean-up for %v failed: %s", prefix, utils.ToLoggableResourceName(vmiName.Name, &vmiName.Namespace), message)
 }
 
-func shouldFailWith(conditions []v2vv1.VirtualMachineImportCondition) (bool, string) {
-	var message string
+func hasBlockerCondition(conditions []v2vv1.VirtualMachineImportCondition) bool {
 	valid := true
 	for _, condition := range conditions {
 		if condition.Status == corev1.ConditionFalse {
-			if condition.Message != nil {
-				message = utils.WithMessage(message, *condition.Message)
-			}
 			valid = false
 		}
 	}
-	return valid, message
+	return valid
 }
 
-func (r *ReconcileVirtualMachineImport) initProvider(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (string, error) {
+func (r *ReconcileVirtualMachineImport) validateProvider(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (string, error) {
 	// Fetch source provider secret
 	sourceProviderSecretObj, err := r.fetchSecret(instance)
 	if err != nil {
@@ -1311,44 +1400,17 @@ func (r *ReconcileVirtualMachineImport) fetchVM(instance *v2vv1.VirtualMachineIm
 	return nil
 }
 
-func (r *ReconcileVirtualMachineImport) validate(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (bool, error) {
-	logger := log.WithValues("Request.Namespace", instance.Namespace, "Request.Name", instance.Name)
-	if shouldInvoke(&instance.Status) {
-		conditions, err := provider.Validate()
-		if err != nil {
-			return true, err
-		}
-		err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, conditions...)
-		if err != nil {
-			return true, err
-		}
-		if valid, message := shouldFailWith(conditions); !valid {
-			logger.Info("Import blocked. " + message)
-
-			// Emit event vm import blocked:
-			if vmName, err := provider.GetVMName(); err == nil {
-				// This potentially flood events service, consider checking if event already occurred and don't emit it if it did,
-				// if any performance implication occur.
-				r.recorder.Eventf(instance, corev1.EventTypeNormal, EventImportBlocked, "Virtual Machine %s/%s import blocked: %s", instance.Namespace, vmName, message)
-			}
-
-			return false, nil
-		}
-
-		vmStatus, err := provider.GetVMStatus()
-		if err != nil {
-			return true, err
-		}
-
-		logger.Info("Storing source VM status", "status", vmStatus)
-		err = r.storeSourceVMStatus(instance, string(vmStatus))
-		if err != nil {
-			return true, err
-		}
-	} else {
-		logger.Info("VirtualMachineImport has already been validated positively. Skipping re-validation")
+func (r *ReconcileVirtualMachineImport) validate(instance *v2vv1.VirtualMachineImport, provider provider.Provider) error {
+	conds, err := provider.Validate()
+	if err != nil {
+		return err
 	}
-	return true, nil
+	err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, conds...)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ReconcileVirtualMachineImport) templateMatchingFailed(errorMessage string, processingCond *v2vv1.VirtualMachineImportCondition, provider provider.Provider, instance *v2vv1.VirtualMachineImport) error {

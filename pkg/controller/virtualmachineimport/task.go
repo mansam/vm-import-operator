@@ -1,10 +1,15 @@
 package virtualmachineimport
 
 import (
+	"context"
+	"fmt"
+	"github.com/go-logr/logr"
 	"github.com/konveyor/controller/pkg/itinerary"
-	"github.com/konveyor/controller/pkg/logging"
 	"github.com/kubevirt/vm-import-operator/pkg/apis/v2v/v1beta1"
 	provider "github.com/kubevirt/vm-import-operator/pkg/providers"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	kubevirtv1 "kubevirt.io/client-go/api/v1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -26,10 +31,14 @@ const (
 	PreImport      = "PreImport"
 	ImportDisks    = "ImportDisks"
 	ConvertGuest   = "ConvertGuest"
-	ImportFailed   = "Failed"
-	RestoreSource  = "RestoreSource"
+	RestoreInitialVMState  = "RestoreInitialVMState"
 	CleanUp        = "CleanUp"
 	Completed      = "Completed"
+
+	ImportFailed   = "Failed"
+	CreateVMFailed = "CreateVMFailed"
+	ImportDisksFailed = "ImportDisksFailed"
+	ConvertGuestFailed = "ConvertGuestFailed"
 )
 
 var ColdItinerary = itinerary.Itinerary{
@@ -63,64 +72,168 @@ var FailedItinerary = itinerary.Itinerary{
 	Name: "Failed",
 	Pipeline: itinerary.Pipeline{
 		{Name: ImportFailed},
-		{Name: RestoreSource},
+		{Name: RestoreInitialVMState},
 		{Name: CleanUp},
 		{Name: Completed},
 	},
 }
 
 type Task struct {
-	Log logging.Logger
+	// k8s
+	Log logr.Logger
 	Client k8sclient.Client
+	Scheme *runtime.Scheme
+	Recorder record.EventRecorder
+
+	// prerequisites
 	Owner *v1beta1.VirtualMachineImport
-	Provider *provider.Provider
-	Mapper *provider.Mapper
-	Step string
+	Provider provider.Provider
+	Mapper provider.Mapper
+
+	// pipeline
+	Phase string
 	Requeue time.Duration
 	Itinerary itinerary.Itinerary
 	Errors []string
 }
 
 func (t *Task) Run() error {
-	t.Log.Info("[RUN]", "step", t.Step)
+	t.Log.Info("[RUN]", "phase", t.Phase)
 	err := t.init()
 	if err != nil {
 		return err
 	}
 
-	switch t.Step {
-	case Created:
-		t.Step = t.next(t.Step)
-	case Started:
-		//now := meta.Now()
-		//t.Owner.Status.Started = &now
-		t.Step = t.next(t.Step)
+	switch t.Phase {
+	case Created, Started:
+		t.Phase = t.next(t.Phase)
 	case Prepare:
-		t.Step = t.next(t.Step)
+		t.Phase = t.next(t.Phase)
 	case PowerOffSource:
-		err := t.powerOffSource()
+		err := t.storeInitialVMState()
 		if err != nil {
 			return err
 		}
-		t.Step = t.next(t.Step)
+		err = t.powerOffSource()
+		if err != nil {
+			return err
+		}
+		t.Phase = t.next(t.Phase)
 	case CreateVM:
 		vmSpec, err := t.createVMSpec()
 		if err != nil {
+			// set VMCreationFailed condition
 			return err
 		}
 		err = t.createVMFromSpec(vmSpec)
 		if err != nil {
 			return err
 		}
-
-		t.next(t.Step)
-
+		t.next(t.Phase)
+	case ImportDisks:
+		completed, err := t.importDisks()
+		if err != nil {
+			// set DataVolumeCreationFailed condition
+			return err
+		}
+		if completed {
+			t.Phase = t.next(t.Phase)
+		} else {
+			t.Requeue = PollReQ
+		}
+	case ConvertGuest:
+		completed, err := t.convertGuest()
+		if err != nil {
+			// set GuestConversionFailed condition
+			return err
+		}
+		if completed {
+			t.Phase = t.next(t.Phase)
+		} else {
+			t.Requeue = PollReQ
+		}
+	case RestoreInitialVMState:
+		err := t.restoreInitialVMState()
+		if err != nil {
+			return err
+		}
+		t.Phase = t.next(t.Phase)
+	case CleanUp:
+		err := t.cleanUp(true)
+		if err != nil {
+			return err
+		}
+		t.Phase = t.next(t.Phase)
+	case Completed:
+		t.Requeue = NoReQ
+		t.Log.Info("[COMPLETED]")
+	default:
+		t.Requeue = NoReQ
+		t.Phase = Completed
 	}
 
 	return nil
 }
 
+func (t *Task) cleanUp(failed bool) error {
+	return t.Provider.CleanUp(failed, t.Owner, t.Client)
+}
+
+func (t *Task) storeInitialVMState() error {
+	vmStatus, err := t.Provider.GetVMStatus()
+	if err != nil {
+		return err
+	}
+	vmiCopy := t.Owner.DeepCopy()
+	if vmiCopy.Annotations == nil {
+		vmiCopy.Annotations = make(map[string]string)
+	}
+	vmiCopy.Annotations[sourceVMInitialState] = string(vmStatus)
+
+	patch := k8sclient.MergeFrom(t.Owner)
+	return t.Client.Patch(context.TODO(), vmiCopy, patch)
+}
+
+func (t *Task) restoreInitialVMState() error {
+	vmInitialState, found := t.Owner.Annotations[sourceVMInitialState]
+	if !found {
+		return fmt.Errorf("VM didn't have initial state stored in '%s' annotation", sourceVMInitialState)
+	}
+	if vmInitialState == string(provider.VMStatusUp) {
+		return t.Provider.StartVM()
+	}
+	// VM was already down
+	return nil
+}
+
+func (t *Task) fail(nextStep string, reasons []string) {
+	t.addErrors(reasons)
+
+	// set conditions
+	t.Phase = nextStep
+}
+
+func (t *Task) addErrors(errors []string) {
+	for _, e := range errors {
+		t.Errors = append(t.Errors, e)
+	}
+}
+
+func (t *Task) importDisks() (bool, error) {
+	return false, nil
+}
+
+func (t *Task) convertGuest() (bool, error) {
+	return false, nil
+}
+
 func (t *Task) createVMFromSpec(vmSpec *kubevirtv1.VirtualMachine) error {
+	err := t.Client.Create(context.TODO(), vmSpec)
+	if err != nil && !k8serrors.IsAlreadyExists(err) {
+		t.Log.Error(err, "Creating virtual machine failed", "Namespace", vmSpec.Namespace, "Name", vmSpec.Name)
+		t.fail(CreateVMFailed, []string{err.Error()})
+		return err
+	}
 
 	return nil
 }
@@ -154,6 +267,7 @@ func (t *Task) createVMSpec() (*kubevirtv1.VirtualMachine, error) {
 				vmSpec = t.Mapper.CreateEmptyVM(targetVMName)
 			} else {
 				t.Log.Info("Failed to process the VM template. Failing.", "Error", err.Error())
+				return nil, err
 			}
 		}
 		// if the template generated a name and no targetVMName was set, use that.
@@ -171,7 +285,8 @@ func (t *Task) createVMSpec() (*kubevirtv1.VirtualMachine, error) {
 	setAnnotations(t.Owner, vmSpec)
 	setTrackerLabel(vmSpec.ObjectMeta, t.Owner)
 	// Set VirtualMachineImport instance as the owner and controller
-	if err := controllerutil.SetControllerReference(t.Owner, vmSpec, r.scheme); err != nil {
+	err = controllerutil.SetControllerReference(t.Owner, vmSpec, t.Scheme)
+	if err != nil {
 		return nil, err
 	}
 
@@ -190,7 +305,7 @@ func (t *Task) next(phase string) string {
 	step, done, err := t.Itinerary.Next(phase)
 	if done || err != nil {
 		if err != nil {
-			t.Log.Trace(err)
+			t.Log.Error(err, "Error while determining next phase")
 		}
 		return Completed
 	} else {
@@ -208,13 +323,14 @@ func (t *Task) init() error {
 		t.Itinerary = ColdItinerary
 	}
 	if t.Owner.Status.Itinerary != t.Itinerary.Name {
-		t.Step = t.Itinerary.Pipeline[0].Name
+		t.Phase = t.Itinerary.Pipeline[0].Name
 	}
 	return nil
 }
 
 func (t *Task) failed() bool {
-	// return t.Owner.HasErrors() || t.Owner.Status.HasCondition(Failed)
+	//return t.Owner.HasErrors() || t.Owner.Status.HasCondition(Failed)
+	//return t.Owner.Status.HasCondition(Failed)
 	return false
 }
 
