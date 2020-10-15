@@ -2059,6 +2059,14 @@ func CreateVMImport() *extv1.CustomResourceDefinition {
 											Description: "The name of the virtual machine created by the import process",
 											Type:        "string",
 										},
+										"itinerary": {
+											Description: "The name of the import itinerary being used",
+											Type:        "string",
+										},
+										"phase": {
+											Description: "The name of the current phase of the import itinerary",
+											Type:        "string",
+										},
 									},
 								},
 							},
@@ -2536,6 +2544,14 @@ DiskMappings.Source.ID represents the DiskObjectId or vDiskID of the VirtualDisk
 										},
 										"targetVmName": {
 											Description: "The name of the virtual machine created by the import process",
+											Type:        "string",
+										},
+										"itinerary": {
+											Description: "The name of the import itinerary being used",
+											Type:        "string",
+										},
+										"phase": {
+											Description: "The name of the current phase of the import itinerary",
 											Type:        "string",
 										},
 									},

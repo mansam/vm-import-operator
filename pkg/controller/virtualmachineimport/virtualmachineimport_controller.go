@@ -164,6 +164,18 @@ func add(mgr manager.Manager, r *ReconcileVirtualMachineImport) error {
 		return err
 	}
 
+	// Watch for import pod events:
+	err = c.Watch(
+		&source.Kind{Type: &v1.Pod{}},
+		&handler.EnqueueRequestForOwner{
+			IsController: false,
+			OwnerType:    &v2vv1.VirtualMachineImport{},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
 	// Watch for DV events:
 	err = c.Watch(
 		&source.Kind{Type: &cdiv1.DataVolume{}},
@@ -211,7 +223,6 @@ type ReconcileVirtualMachineImport struct {
 
 
 func (r *ReconcileVirtualMachineImport) importVM(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (time.Duration, error) {
-
 	mapper, err := provider.CreateMapper()
 	if err != nil {
 		return FastReQ, err
@@ -306,6 +317,12 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{Requeue: true}, nil
 	}
 
+	// fetch source vm
+	err = r.fetchVM(instance, prov)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	if blocked := hasBlockerCondition(instance.Status.Conditions); !blocked {
 		requeueAfter, err = r.importVM(instance, prov)
 		if err != nil {
@@ -313,8 +330,7 @@ func (r *ReconcileVirtualMachineImport) Reconcile(request reconcile.Request) (re
 		}
 	}
 
-	//instance.MarkReconciled()
-	err = r.client.Update(context.TODO(), instance)
+	err = r.client.Status().Update(context.TODO(), instance)
 	if err != nil {
 		return reconcile.Result{Requeue: true}, nil
 	}
@@ -1169,6 +1185,12 @@ func (r *ReconcileVirtualMachineImport) updateVMSpecDataVolumes(mapper provider.
 	return nil
 }
 
+func (r *ReconcileVirtualMachineImport) updateConditions(instance *v2vv1.VirtualMachineImport, newConditions ...v2vv1.VirtualMachineImportCondition) {
+	for _, condition := range newConditions {
+		conditions.UpsertCondition(instance, condition)
+	}
+}
+
 func (r *ReconcileVirtualMachineImport) upsertStatusConditions(vmiName types.NamespacedName, newConditions ...v2vv1.VirtualMachineImportCondition) error {
 	var instance v2vv1.VirtualMachineImport
 	err := r.apiReader.Get(context.TODO(), vmiName, &instance)
@@ -1293,13 +1315,12 @@ func foldErrors(errs []error, prefix string, vmiName types.NamespacedName) error
 }
 
 func hasBlockerCondition(conditions []v2vv1.VirtualMachineImportCondition) bool {
-	valid := true
 	for _, condition := range conditions {
 		if condition.Status == corev1.ConditionFalse {
-			valid = false
+			return true
 		}
 	}
-	return valid
+	return false
 }
 
 func (r *ReconcileVirtualMachineImport) validateProvider(instance *v2vv1.VirtualMachineImport, provider provider.Provider) (string, error) {
@@ -1347,10 +1368,7 @@ func (r *ReconcileVirtualMachineImport) upsertValidationCondition(
 	message string,
 	err error) error {
 	condition := newValidationCondition(reason, message+": "+err.Error())
-	cerr := r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, condition)
-	if cerr != nil {
-		return cerr
-	}
+	r.updateConditions(instance, condition)
 	return nil
 }
 
@@ -1371,10 +1389,7 @@ func (r *ReconcileVirtualMachineImport) fetchVM(instance *v2vv1.VirtualMachineIm
 		err := provider.LoadVM(instance.Spec.Source)
 		if err != nil {
 			condition := newValidationCondition(v2vv1.SourceVMNotFound, "Failed to load source VM: "+err.Error())
-			cerr := r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, condition)
-			if cerr != nil {
-				return cerr
-			}
+			r.updateConditions(instance, condition)
 			return err
 		}
 	} else {
@@ -1386,10 +1401,7 @@ func (r *ReconcileVirtualMachineImport) fetchVM(instance *v2vv1.VirtualMachineIm
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			condition := newValidationCondition(v2vv1.ResourceMappingNotFound, "Resource mapping not found")
-			cerr := r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, condition)
-			if cerr != nil {
-				return cerr
-			}
+			r.updateConditions(instance, condition)
 		}
 		return err
 	}
@@ -1405,10 +1417,7 @@ func (r *ReconcileVirtualMachineImport) validate(instance *v2vv1.VirtualMachineI
 	if err != nil {
 		return err
 	}
-	err = r.upsertStatusConditions(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, conds...)
-	if err != nil {
-		return err
-	}
+	r.updateConditions(instance, conds...)
 
 	return nil
 }

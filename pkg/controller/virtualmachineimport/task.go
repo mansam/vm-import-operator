@@ -2,17 +2,24 @@ package virtualmachineimport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/go-logr/logr"
 	"github.com/konveyor/controller/pkg/itinerary"
 	"github.com/kubevirt/vm-import-operator/pkg/apis/v2v/v1beta1"
 	provider "github.com/kubevirt/vm-import-operator/pkg/providers"
+	"github.com/kubevirt/vm-import-operator/pkg/utils"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	kubevirtv1 "kubevirt.io/client-go/api/v1"
+	cdiv1 "kubevirt.io/containerized-data-importer/pkg/apis/core/v1alpha1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,47 +30,39 @@ var NoReQ = time.Duration(0)
 
 // Steps
 const (
-	Created        = ""
+	Created        = "Created"
 	Started        = "Started"
 	Prepare        = "Prepare"
 	PowerOffSource = "PowerOffSource"
 	CreateVM       = "CreateVM"
 	PreImport      = "PreImport"
+	CreateDataVolumes = "CreateDataVolumes"
 	ImportDisks    = "ImportDisks"
 	ConvertGuest   = "ConvertGuest"
 	RestoreInitialVMState  = "RestoreInitialVMState"
 	CleanUp        = "CleanUp"
+	CleanUpAfterFailure = "CleanUpAfterFailure"
 	Completed      = "Completed"
 
 	ImportFailed   = "Failed"
 	CreateVMFailed = "CreateVMFailed"
+	DataVolumeCreationFailed = "DataVolumeCreationFailed"
 	ImportDisksFailed = "ImportDisksFailed"
 	ConvertGuestFailed = "ConvertGuestFailed"
 )
 
 var ColdItinerary = itinerary.Itinerary{
-	Name: "Cold",
+	Name: "ColdImport",
 	Pipeline: itinerary.Pipeline{
 		{Name: Created},
 		{Name: Started},
 		{Name: Prepare},
 		{Name: PowerOffSource},
 		{Name: CreateVM},
+		{Name: CreateDataVolumes},
 		{Name: ImportDisks},
 		{Name: ConvertGuest},
-		{Name: Completed},
-	},
-}
-
-var WarmItinerary = itinerary.Itinerary{
-	Name: "Warm",
-	Pipeline: itinerary.Pipeline{
-		{Name: Created},
-		{Name: Started},
-		{Name: Prepare},
-		{Name: PreImport},
-		{Name: ImportDisks},
-		{Name: ConvertGuest},
+		{Name: CleanUp},
 		{Name: Completed},
 	},
 }
@@ -73,7 +72,7 @@ var FailedItinerary = itinerary.Itinerary{
 	Pipeline: itinerary.Pipeline{
 		{Name: ImportFailed},
 		{Name: RestoreInitialVMState},
-		{Name: CleanUp},
+		{Name: CleanUpAfterFailure},
 		{Name: Completed},
 	},
 }
@@ -122,6 +121,7 @@ func (t *Task) Run() error {
 	case CreateVM:
 		vmSpec, err := t.createVMSpec()
 		if err != nil {
+			t.Requeue = PollReQ
 			// set VMCreationFailed condition
 			return err
 		}
@@ -129,11 +129,18 @@ func (t *Task) Run() error {
 		if err != nil {
 			return err
 		}
-		t.next(t.Phase)
+		t.Phase = t.next(t.Phase)
+	case CreateDataVolumes:
+		err := t.createDataVolumes()
+		if err != nil {
+			// set DataVolumeCreationFailed condition
+			return err
+		}
+		t.Phase = t.next(t.Phase)
 	case ImportDisks:
 		completed, err := t.importDisks()
 		if err != nil {
-			// set DataVolumeCreationFailed condition
+			// set ImportFailed condition
 			return err
 		}
 		if completed {
@@ -159,6 +166,12 @@ func (t *Task) Run() error {
 		}
 		t.Phase = t.next(t.Phase)
 	case CleanUp:
+		err := t.cleanUp(false)
+		if err != nil {
+			return err
+		}
+		t.Phase = t.next(t.Phase)
+	case CleanUpAfterFailure:
 		err := t.cleanUp(true)
 		if err != nil {
 			return err
@@ -219,8 +232,151 @@ func (t *Task) addErrors(errors []string) {
 	}
 }
 
+func (t *Task) createDataVolumes() error {
+	vm := &kubevirtv1.VirtualMachine{}
+	err := t.Client.Get(context.TODO(), types.NamespacedName{Namespace: t.Owner.Namespace, Name: t.Owner.Status.TargetVMName}, vm)
+	if err != nil {
+		return err
+	}
+
+	dvMap, err := t.Mapper.MapDataVolumes(&t.Owner.Status.TargetVMName)
+	if err != nil {
+		return err
+	}
+
+	for dvKey, dv := range dvMap {
+		dataVolume := &cdiv1.DataVolume{}
+		err = t.Client.Get(context.TODO(), types.NamespacedName{Namespace: t.Owner.Namespace, Name: dvKey}, dataVolume)
+		if err != nil && k8serrors.IsNotFound(err) {
+			valid, err := t.Provider.ValidateDiskStatus(dv.Name)
+			if err != nil {
+				return err
+			}
+
+			if !valid {
+				// should we just retry?
+				return errors.New("invalid disk state")
+			}
+
+			err = t.createDataVolume(dv, vm)
+			if err != nil {
+				t.fail(DataVolumeCreationFailed, []string{err.Error()})
+				return err
+			}
+			t.Mapper.MapDisk(vm, dv)
+		} else if err != nil {
+			return err
+		}
+	}
+
+	return t.Client.Update(context.TODO(), vm)
+}
+
+
+func (t *Task) createDataVolume(dataVolume cdiv1.DataVolume, vm *kubevirtv1.VirtualMachine) error {
+	err := controllerutil.SetControllerReference(t.Owner, &dataVolume, t.Scheme)
+	if err != nil {
+		return err
+	}
+
+	err = controllerutil.SetOwnerReference(vm, &dataVolume, t.Scheme)
+	if err != nil {
+		return err
+	}
+
+	setTrackerLabel(dataVolume.ObjectMeta, t.Owner)
+
+	err = t.Client.Create(context.TODO(), &dataVolume)
+	if err != nil {
+		message := fmt.Sprintf("Data volume %s/%s creation failed: %s", dataVolume.Namespace, dataVolume.Name, err)
+		t.Log.Error(err, message)
+		return errors.New(message)
+	}
+
+	return nil
+}
+
 func (t *Task) importDisks() (bool, error) {
-	return false, nil
+	dvMap, err := t.Mapper.MapDataVolumes(&t.Owner.Status.TargetVMName)
+	if err != nil {
+		return false, err
+	}
+
+	dvsDone := make(map[string]bool)
+	dvsImportProgress := make(map[string]float64)
+	for dvKey, _ := range dvMap {
+		dataVolume := &cdiv1.DataVolume{}
+		err = t.Client.Get(context.TODO(), types.NamespacedName{Namespace: t.Owner.Namespace, Name: dvKey}, dataVolume)
+		if err != nil {
+			return false, err
+		}
+
+		switch dataVolume.Status.Phase {
+		case cdiv1.Succeeded:
+			dvsDone[dvKey] = true
+		case cdiv1.Pending:
+			// set pending condition
+			// log pending
+		case cdiv1.Failed:
+			// set condition
+			t.fail(ImportDisksFailed, []string{"datavolume is in Failed phase"})
+		case cdiv1.ImportInProgress:
+			// set processing condition
+			t.checkImporterPodStatus(dvKey)
+		}
+
+		dvsImportProgress[dvKey] = getImportProgress(dataVolume)
+	}
+
+	done := isDoneImport(dvsDone, len(dvMap))
+	return done, nil
+}
+
+func getImportProgress(dataVolume *cdiv1.DataVolume) float64 {
+	progress := string(dataVolume.Status.Progress)
+	progressFloat, err := strconv.ParseFloat(strings.TrimRight(progress, "%"), 64)
+	if err != nil {
+		return 0.0
+	} else {
+		return progressFloat
+	}
+}
+
+func podFailed(pod *corev1.Pod) bool {
+	return pod.Status.ContainerStatuses != nil &&
+		pod.Status.ContainerStatuses[0].LastTerminationState.Terminated != nil &&
+		pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.ExitCode > 0
+}
+
+func podExceededRestartTolerance(pod *corev1.Pod) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason == podCrashLoopBackOff && cs.RestartCount > int32(importPodRestartTolerance) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *Task) checkImporterPodStatus(dvKey string) {
+	importerPod := &corev1.Pod{}
+	err := t.Client.Get(context.TODO(), types.NamespacedName{Namespace: t.Owner.Namespace, Name: importerPodNameFromDv(dvKey)}, importerPod)
+	if err == nil {
+		if podFailed(importerPod) {
+			// emit an event
+		}
+		if podExceededRestartTolerance(importerPod) {
+			t.fail(ImportDisksFailed, []string{"pod CrashLoopBackoff restart limit exceeded"})
+		}
+	} else {
+		// pod not found, or other transient problem. hang tight and requeue.
+	}
+
+}
+
+func isDoneImport(dvsDone map[string]bool, numberOfDvs int) bool {
+	// Count successfully imported dvs:
+	done := utils.CountImportedDataVolumes(dvsDone)
+	return done == numberOfDvs
 }
 
 func (t *Task) convertGuest() (bool, error) {
@@ -294,6 +450,7 @@ func (t *Task) createVMSpec() (*kubevirtv1.VirtualMachine, error) {
 }
 
 func (t *Task) importWithoutTemplate() bool {
+	// check import without template feature gate
 	return false
 }
 
@@ -317,8 +474,6 @@ func (t *Task) init() error {
 	t.Requeue = FastReQ
 	if t.failed() {
 		t.Itinerary = FailedItinerary
-	} else if t.warm() {
-		t.Itinerary = WarmItinerary
 	} else {
 		t.Itinerary = ColdItinerary
 	}
@@ -331,10 +486,5 @@ func (t *Task) init() error {
 func (t *Task) failed() bool {
 	//return t.Owner.HasErrors() || t.Owner.Status.HasCondition(Failed)
 	//return t.Owner.Status.HasCondition(Failed)
-	return false
-}
-
-func (t *Task) warm() bool {
-	// return t.Owner.Spec.Warm
 	return false
 }
