@@ -2,6 +2,7 @@ package guestconversion
 
 import (
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -11,7 +12,12 @@ import (
 	libvirtxml "libvirt.org/libvirt-go-xml"
 )
 
-const configMapVolumeName = "libvirt-domain-xml"
+const (
+	annDescriptionKey   = "description"
+	annDescription      = "VM Import Operator guest conversion pod"
+	podNamePrefix       = "vm-converter-"
+	configMapVolumeName = "libvirt-domain-xml"
+)
 
 var (
 	virtV2vImage    = os.Getenv("VIRTV2V_IMAGE")
@@ -35,6 +41,12 @@ func MakeGuestConversionJobSpec(vmSpec *v1.VirtualMachine, libvirtConfigMap *cor
 			Parallelism:  &parallelism,
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podNamePrefix + vmSpec.Name,
+					Annotations: map[string]string{
+						annDescriptionKey: annDescription,
+					},
+				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{

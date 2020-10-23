@@ -25,6 +25,7 @@ var _ = Describe("GuestConversion", func() {
 			}
 			volumes = []kubevirtv1.Volume{}
 			vmSpec = &kubevirtv1.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-vm"},
 				Spec: kubevirtv1.VirtualMachineSpec{
 					Template: &kubevirtv1.VirtualMachineInstanceTemplateSpec{
 						Spec: kubevirtv1.VirtualMachineInstanceSpec{
@@ -33,6 +34,12 @@ var _ = Describe("GuestConversion", func() {
 					},
 				},
 			}
+		})
+
+		It("should set the pod name and description", func() {
+			job := MakeGuestConversionJobSpec(vmSpec, configMap)
+			Expect(job.Spec.Template.ObjectMeta.Name).To(Equal("vm-converter-my-vm"))
+			Expect(job.Spec.Template.ObjectMeta.Annotations["description"]).To(Equal("VM Import Operator guest conversion pod"))
 		})
 
 		It("should create a volume and mount for the libvirt domain config map", func() {
