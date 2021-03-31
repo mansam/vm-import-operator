@@ -44,6 +44,7 @@ var (
 	expectedNumDisks  = 2
 	diskName1         = "disk-202-0"
 	diskBytes1        = 2147483648
+	diskOverhead1     = 2272469468 // 5.5% overhead
 	diskName2         = "disk-202-1"
 	diskBytes2        = 1073741824
 	expectedDiskName1 = "d39a8d6c-ea37-5c91-8979-334e7e07cab6-203"
@@ -304,7 +305,7 @@ var _ = Describe("Test mapping disks", func() {
 		filesystemOverhead = cdiv1.FilesystemOverhead{
 			Global: "0.0",
 			StorageClass: map[string]cdiv1.Percent{
-				storageClass: "1.0",
+				storageClass: "0.055",
 			},
 		}
 	)
@@ -340,7 +341,8 @@ var _ = Describe("Test mapping disks", func() {
 			},
 		}
 		mapper := mapper.NewVmwareMapper(vm, vmProperties, hostProperties, credentials, mappings, instanceUID, "", osFinder)
-		dvs, _ := mapper.MapDataVolumes(&targetVMName, filesystemOverhead)
+		dvs, err := mapper.MapDataVolumes(&targetVMName, filesystemOverhead)
+		Expect(err).To(BeNil())
 		Expect(dvs).To(HaveLen(expectedNumDisks))
 		Expect(dvs).To(HaveKey(expectedDiskName1))
 		Expect(dvs).To(HaveKey(expectedDiskName2))
@@ -357,7 +359,7 @@ var _ = Describe("Test mapping disks", func() {
 		// check that disk overheads are set correctly
 		Expect(dvs[expectedDiskName1].Spec.PVC.Resources.Requests).To(HaveKey(v1.ResourceStorage))
 		storageResource := dvs[expectedDiskName1].Spec.PVC.Resources.Requests[v1.ResourceStorage]
-		Expect(storageResource.Value()).To(BeEquivalentTo(diskBytes1 * 2))
+		Expect(storageResource.Value()).To(BeEquivalentTo(diskOverhead1))
 
 		Expect(dvs[expectedDiskName2].Spec.PVC.Resources.Requests).To(HaveKey(v1.ResourceStorage))
 		storageResource = dvs[expectedDiskName2].Spec.PVC.Resources.Requests[v1.ResourceStorage]

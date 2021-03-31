@@ -22,6 +22,9 @@ import (
 const memoryGI = 1024 * 1024 * 1024
 const maxMemoryGI = 4 * 1024 * 1024 * 1024
 
+const diskSize = 1073741824
+const diskOverhead = 1136234734
+
 var (
 	targetVMName       = "myvm"
 	expectedDVName     = targetVMName + "-" + "123"
@@ -442,9 +445,9 @@ var _ = Describe("Test mapping disks", func() {
 		mapper := mapper.NewOvirtMapper(vm, &mappings, credentials, namespace, &osFinder)
 		daName := expectedDVName
 
-		// request 100% overhead, resulting in a disk of twice the size.
+		// request 5.5% overhead
 		overhead := cdiv1.FilesystemOverhead{
-			Global: "1.0",
+			Global: "0.055",
 		}
 		dvs, _ := mapper.MapDataVolumes(&targetVMName, overhead)
 
@@ -455,7 +458,7 @@ var _ = Describe("Test mapping disks", func() {
 
 		Expect(dv.Spec.PVC.Resources.Requests).To(HaveKey(corev1.ResourceStorage))
 		storageResource := dv.Spec.PVC.Resources.Requests[corev1.ResourceStorage]
-		Expect(storageResource.Value()).To(BeEquivalentTo(memoryGI * 2))
+		Expect(storageResource.Value()).To(BeEquivalentTo(diskOverhead))
 
 		Expect(dv.Spec.PVC.StorageClassName).To(Not(BeNil()))
 		Expect(*dv.Spec.PVC.StorageClassName).To(Equal("storageclassname"))
@@ -472,11 +475,11 @@ var _ = Describe("Test mapping disks", func() {
 		mapper := mapper.NewOvirtMapper(vm, &mappings, credentials, namespace, &osFinder)
 		daName := expectedDVName
 		scName := "storageclassname"
-		// request 100% overhead for the storage class, resulting in a disk of twice the size.
+		// request 5.5% overhead for the storage class
 		overhead := cdiv1.FilesystemOverhead{
 			Global: "0.0",
 			StorageClass: map[string]cdiv1.Percent{
-				scName: "1.0",
+				scName: "0.055",
 			},
 		}
 		dvs, _ := mapper.MapDataVolumes(&targetVMName, overhead)
@@ -488,7 +491,7 @@ var _ = Describe("Test mapping disks", func() {
 
 		Expect(dv.Spec.PVC.Resources.Requests).To(HaveKey(corev1.ResourceStorage))
 		storageResource := dv.Spec.PVC.Resources.Requests[corev1.ResourceStorage]
-		Expect(storageResource.Value()).To(BeEquivalentTo(memoryGI * 2))
+		Expect(storageResource.Value()).To(BeEquivalentTo(diskOverhead))
 
 		Expect(dv.Spec.PVC.StorageClassName).To(Not(BeNil()))
 		Expect(*dv.Spec.PVC.StorageClassName).To(Equal(scName))
@@ -717,7 +720,7 @@ func createVMGeneric(affinity ovirtsdk.VmAffinity, readonly bool, biostype ovirt
 						Id("disk-ID").
 						Name("mydisk").
 						Bootable(true).
-						ProvisionedSize(memoryGI).
+						ProvisionedSize(diskSize).
 						StorageDomain(
 							ovirtsdk.NewStorageDomainBuilder().
 								Name("mystoragedomain").MustBuild()).
